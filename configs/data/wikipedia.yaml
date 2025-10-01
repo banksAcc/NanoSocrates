@@ -1,0 +1,10 @@
+# Lingua wiki da interrogare (REST summary).
+lang: "en"
+
+# Timeout e retry per chiamate REST.
+timeout_s: 30
+max_retries: 2
+
+# Se true, in caso di fallimento (summary mancante) prova fallback a DBpedia abstract@lang.
+enable_dbpedia_abstract_fallback: true
+dbpedia_endpoint: "https://dbpedia.org/sparql"

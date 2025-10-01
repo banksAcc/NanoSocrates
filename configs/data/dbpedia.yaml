@@ -1,0 +1,29 @@
+endpoint: "https://dbpedia.org/sparql"
+
+# Predicati informativi (whitelist) per il dominio film.
+# https://mappings.dbpedia.org/server/ontology/classes/Film per aggiunta altri predicati
+predicates_whitelist:
+  - dbo:director
+  - dbo:starring
+  - dbo:writer
+  - dbo:musicComposer
+  - dbo:releaseDate
+  - dbo:runtime
+  - dbo:country
+  - dbo:language
+  - dbo:genre
+
+# Numero max di triple totali da estrarre (somma dei batch).
+limit_total: 100000
+
+# Batching SPARQL: LIMIT/OFFSET per non stressare l'endpoint. Generiamo 20 query se limit_total = 100k
+batch_size: 5000
+
+# Timeout in secondi per ogni query SPARQL.
+timeout_s: 60
+
+# Direzione: "out" (film come soggetto) o "both" (aggiunge entranti).
+direction: "both"
+
+# Lingua preferita per gli abstract (fallback), se usati.
+lang: "en"

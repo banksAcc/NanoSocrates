@@ -1,0 +1,15 @@
+# Filtri minimi di qualità: scarta film con meno di N triple utili.
+min_triples_per_film: 3
+
+# Lunghezza massima delle sequenze (verifica in build, ma il vero cut avviene in tokenizer/model).
+max_seq_len: 384
+
+# Split per film (no leakage): somma = 1.0
+train_val_test_split: [0.8, 0.1, 0.1]
+
+# Riproducibilità.
+shuffle_seed: 13
+
+# Pulizie/normalizzazioni.
+deduplicate: true
+normalize_prefixes: true
