@@ -1,13 +1,19 @@
-# Assicurati di avere installato:
-# pip install pyyaml requests SPARQLWrapper tqdm regex ujson pandas
-
-export PYTHONPATH=src
+TEST DB - ENDPOINT E DATI
 
 # 1) Triple DBpedia
 python scripts/fetch_dbpedia.py --config configs/data/dbpedia.yaml --out data/raw/dbpedia_triples.jsonl
 
-# 2) Testo Wikipedia (con fallback opzionale a abstract DBpedia)
-python scripts/fetch_wikipedia.py --config configs/data/wikipedia.yaml --in data/raw/dbpedia_triples.jsonl --out data/raw/wikipedia_intro.jsonl
+# 2) Testo Wikipedia
+python scripts/fetch_wikipedia.py --config configs/data/wikipedia.yaml --in data/raw/dbpedia_triples.jsonl --out data/raw/wikipedia_intro.jsonl --max 200 --workers 8 --cache data/interim/wiki_cache.jsonl --logfails data/interim/wiki_failures.jsonl
 
 # 3) Costruzione dataset (split per film + 4 task per split)
 python scripts/build_dataset.py --config configs/data/build.yaml --dbp data/raw/dbpedia_triples.jsonl --wiki data/raw/wikipedia_intro.jsonl --outdir data/processed
+
+
+python scripts/train_tokenizer.py --config configs/tokenizer/bpe_24k.yaml \
+  --inputs data/processed/text2rdf.train.jsonl data/processed/rdf2text.train.jsonl \
+  --outdir data/vocab
+
+
+
+python scripts/fetch_wikipedia.py --config configs/data/wikipedia.yaml --in data/raw/dbpedia_triples.jsonl --out data/raw/wikipedia_intro.jsonl --max 200 --workers 8 --cache data/interim/wiki_cache.jsonl --logfails data/interim/wiki_failures.jsonl

@@ -6,5 +6,5 @@ timeout_s: 30
 max_retries: 2
 
 # Se true, in caso di fallimento (summary mancante) prova fallback a DBpedia abstract@lang.
-enable_dbpedia_abstract_fallback: true
-dbpedia_endpoint: "https://dbpedia.org/sparql"
+workers: 16                  # thread in parallelo per Wikipedia
+user_agent: "NanoSocrates/0.1 (contact: a.milella9@studenti.poliba.it)"

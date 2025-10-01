@@ -1,0 +1,7 @@
+pyyaml 
+requests
+SPARQLWrapper
+tqdm
+regex 
+ujson 
+pandas
