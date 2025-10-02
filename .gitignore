@@ -212,3 +212,5 @@ data/
 
 # Ma NON ignorare la cartella src/data
 !src/data/
+
+checkpoints/

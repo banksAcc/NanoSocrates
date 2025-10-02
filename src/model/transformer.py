@@ -15,14 +15,15 @@ class TinySeq2Seq(nn.Module):
             num_encoder_layers=num_encoder_layers,
             num_decoder_layers=num_decoder_layers,
             dim_feedforward=dim_feedforward, dropout=dropout,
-            batch_first=True
+            batch_first=True,
+            #enable_nested_tensor=False  # <--- aggiungi questa riga
         )
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         if tie_embeddings: self.lm_head.weight = self.emb.weight
 
     @staticmethod
     def _subsequent_mask(sz: int, device):
-        return torch.triu(torch.full((sz, sz), float('-inf'), device=device), 1)
+        return torch.triu(torch.ones(sz, sz, dtype=torch.bool, device=device), 1)
 
     def forward(self, input_ids, attention_mask, labels=None):
         device = input_ids.device

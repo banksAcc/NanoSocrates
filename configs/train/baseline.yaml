@@ -20,3 +20,6 @@ max_steps: 30000
 eval_every: 1000
 save_dir: "checkpoints/baseline"
 seed: 42
+
+device: "cuda"        # oppure "cpu"
+num_workers: 4

@@ -20,8 +20,14 @@ python scripts/train_tokenizer.py --config configs/tokenizer/bpe_24k.yaml \
  python scripts/train_tokenizer.py --config configs/tokenizer/bpe_24k.yaml
  python -m scripts.train_tokenizer --config configs/tokenizer/bpe_24k.yaml
 
+pip install --index-url https://download.pytorch.org/whl/cu124 torch torchvision torchaudio
+
+
 2) Sanity overfit (sovrascrivi qualche parametro al volo)
 python -m src.cli overfit --cfg configs/train/baseline.yaml --override max_steps=500 batch_size=8 train_file=data/processed/text2rdf.train.jsonl
+python -m src.cli overfit --cfg configs/train/baseline.yaml --override max_steps=500 batch_size=8
+
+python -m src.cli overfit --cfg configs/train/baseline.yaml --override max_steps=300 batch_size=4 train_file=data/processed/_mini.train.jsonl val_file=data/processed/_mini.train.jsonl
 
 3) Training baseline
 python -m src.cli train --cfg configs/train/baseline.yaml

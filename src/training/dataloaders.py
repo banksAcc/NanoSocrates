@@ -72,7 +72,8 @@ def pad_collate(batch, pad_id: int):
         for i, s in enumerate(seqs):
             out[i, : len(s)] = s
         return out
+
     x = _pad([b["input_ids"] for b in batch])
     y = _pad([b["labels"] for b in batch])
-    attn = (x != pad_id).long()
+    attn = (x != pad_id)            # <-- bool
     return {"input_ids": x, "attention_mask": attn, "labels": y}
