@@ -14,6 +14,15 @@ python scripts/train_tokenizer.py --config configs/tokenizer/bpe_24k.yaml \
   --inputs data/processed/text2rdf.train.jsonl data/processed/rdf2text.train.jsonl \
   --outdir data/vocab
 
+ TEST tokenizer 
 
+ 1) Tokenizer BPE (usa i file emessi da --emit_tasks)
+ python scripts/train_tokenizer.py --config configs/tokenizer/bpe_24k.yaml
+ python -m scripts.train_tokenizer --config configs/tokenizer/bpe_24k.yaml
 
-python scripts/fetch_wikipedia.py --config configs/data/wikipedia.yaml --in data/raw/dbpedia_triples.jsonl --out data/raw/wikipedia_intro.jsonl --max 200 --workers 8 --cache data/interim/wiki_cache.jsonl --logfails data/interim/wiki_failures.jsonl
+2) Sanity overfit (sovrascrivi qualche parametro al volo)
+python -m src.cli overfit --cfg configs/train/baseline.yaml --override max_steps=500 batch_size=8 train_file=data/processed/text2rdf.train.jsonl
+
+3) Training baseline
+python -m src.cli train --cfg configs/train/baseline.yaml
+

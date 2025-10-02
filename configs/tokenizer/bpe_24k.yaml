@@ -1,0 +1,14 @@
+glob: "data/processed/*.jsonl"
+out: "data/vocab/bpe.json"
+vocab_size: 24000
+min_freq: 2
+special_tokens:
+  - "<SOT>"
+  - "<EOT>"
+  - "<SUBJ>"
+  - "<PRED>"
+  - "<OBJ>"
+  - "<RDF2Text>"
+  - "<Text2RDF>"
+  - "<CONTINUERDF>"
+  - "<MASK>"
