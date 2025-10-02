@@ -207,4 +207,8 @@ marimo/_lsp/
 __marimo__/
 
 #don't pass data in git
-data
+# Ignora tutto ciò che è nella cartella data
+data/
+
+# Ma NON ignorare la cartella src/data
+!src/data/
