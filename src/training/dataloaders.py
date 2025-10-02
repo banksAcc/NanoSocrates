@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
-import json, os, torch, re
-from torch.utils.data import Dataset
+import json, os, torch, re, random
+from torch.utils.data import Dataset, ConcatDataset 
 
 @dataclass
 class Example:
@@ -77,3 +77,49 @@ def pad_collate(batch, pad_id: int):
     y = _pad([b["labels"] for b in batch])
     attn = (x != pad_id)            # <-- bool
     return {"input_ids": x, "attention_mask": attn, "labels": y}
+
+#x la parte del multitask
+class MultiTaskRandomDataset(Dataset):
+    """
+    Dataset stocastico: ad ogni __getitem__ ignora 'i' e
+    pesca un task secondo i pesi, poi un esempio random in quel task.
+    Così un 'epoch' è stocastico, ma è pratico e veloce.
+    """
+    def __init__(self, datasets_with_weights):
+        """
+        datasets_with_weights: List[ (JsonlSeq2Seq, weight:int) ]
+        """
+        self.ds = [d for d, w in datasets_with_weights]
+        self.w  = [max(0.0, float(w)) for d, w in datasets_with_weights]
+        sw = sum(self.w)
+        assert sw > 0, "MultiTaskRandomDataset: somma pesi nulla."
+        # cum prob
+        acc, cum = [], 0.0
+        for wi in self.w:
+            cum += wi / sw
+            acc.append(cum)
+        self.cum = acc
+        # lunghezza 'nominale': somma delle lunghezze (va bene per avere ~epoch size)
+        self._len = sum(len(d) for d in self.ds)
+
+    def __len__(self): return self._len
+
+    def _pick_dataset(self):
+        r = random.random()
+        for i, c in enumerate(self.cum):
+            if r <= c: return self.ds[i]
+        return self.ds[-1]
+
+    def __getitem__(self, i):
+        d = self._pick_dataset()
+        j = random.randrange(len(d))
+        return d[j]
+
+def build_multitask_train(dsets, weights):
+    assert len(dsets) == len(weights)
+    pairs = list(zip(dsets, weights))
+    return MultiTaskRandomDataset(pairs)
+
+def build_concat_val(dsets):
+    # validazione: concatenazione di tutte le val per una loss media
+    return ConcatDataset(dsets)

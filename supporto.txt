@@ -29,6 +29,8 @@ python -m src.cli overfit --cfg configs/train/baseline.yaml --override max_steps
 
 python -m src.cli overfit --cfg configs/train/baseline.yaml --override max_steps=300 batch_size=4 train_file=data/processed/_mini.train.jsonl val_file=data/processed/_mini.train.jsonl
 
-3) Training baseline
+3) Training baseline (addestramento per un solo task)
 python -m src.cli train --cfg configs/train/baseline.yaml
+4) Multi-task 3:3:2:2 (tutti e 4 i task):
+python -m src.cli train --cfg configs/train/mix_3322.yaml
 

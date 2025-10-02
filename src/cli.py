@@ -2,7 +2,7 @@
 import argparse, os, torch, random, numpy as np
 from src.utils.config import load_yaml, add_common_overrides, apply_overrides
 from src.tokenizer.tokenizer_io import TokWrapper
-from src.training.dataloaders import JsonlSeq2Seq, pad_collate
+from src.training.dataloaders import JsonlSeq2Seq, pad_collate, build_multitask_train, build_concat_val
 from src.model.transformer import TinySeq2Seq
 from src.training.loop import train_loop
 
@@ -42,33 +42,38 @@ def cmd_train(args):
     device = "cuda" if (want == "cuda" and torch.cuda.is_available()) else "cpu"
     print(f"[device] using: {device}")
 
-    # 3) tokenizer & dataset
+    # 3) tokenizer
     tok = TokWrapper(cfg["tokenizer_file"])
     pad_id = tok.pad_id
     vocab_size = tok.vocab_size()
 
-    train_ds = JsonlSeq2Seq(cfg["train_file"], tokenizer=tok, max_len=cfg["max_len"])
-    val_ds   = JsonlSeq2Seq(cfg["val_file"],   tokenizer=tok, max_len=cfg["max_len"])
-
-    # 4) DataLoader più veloce (A) — num_workers + pin_memory
+    # 4) datasets: single-task (train_file) oppure multi-task (datasets: [...])
     from torch.utils.data import DataLoader
-    from functools import partial
-
     num_workers = int(cfg.get("num_workers", 4))
     pin = (device == "cuda")
-    collate = partial(pad_collate, pad_id=pad_id)  # <-- niente lambda!
 
-    train_dl = DataLoader(
-        train_ds, batch_size=cfg["batch_size"], shuffle=True,
-        collate_fn=collate,
-        num_workers=num_workers, pin_memory=pin
-    )
-    val_dl = DataLoader(
-        val_ds, batch_size=cfg["batch_size"], shuffle=False,
-        collate_fn=collate,
-        num_workers=num_workers, pin_memory=pin
-    )
+    if "datasets" in cfg:
+        # multi-task
+        train_dsets, train_w = [], []
+        val_dsets = []
+        for d in cfg["datasets"]:
+            train_dsets.append(JsonlSeq2Seq(d["train"], tokenizer=tok, max_len=cfg["max_len"]))
+            train_w.append(int(d.get("weight", 1)))
+            val_dsets.append(JsonlSeq2Seq(d["val"], tokenizer=tok, max_len=cfg["max_len"]))
+        train_ds = build_multitask_train(train_dsets, train_w)
+        val_ds   = build_concat_val(val_dsets)
+    else:
+        # single-task (retro-compatibile)
+        train_ds = JsonlSeq2Seq(cfg["train_file"], tokenizer=tok, max_len=cfg["max_len"])
+        val_ds   = JsonlSeq2Seq(cfg["val_file"],   tokenizer=tok, max_len=cfg["max_len"])
 
+    from functools import partial
+    collate = partial(pad_collate, pad_id=pad_id)
+    train_dl = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True,
+                          collate_fn=collate, num_workers=num_workers, pin_memory=pin)
+    val_dl   = DataLoader(val_ds, batch_size=cfg["batch_size"], shuffle=False,
+                          collate_fn=collate, num_workers=num_workers, pin_memory=pin)
+    
     # 5) modello
     model = TinySeq2Seq(
         vocab_size=vocab_size,
