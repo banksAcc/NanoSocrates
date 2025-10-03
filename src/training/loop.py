@@ -1,6 +1,19 @@
 import os, torch
 from tqdm import tqdm
+from contextlib import nullcontext
+from inspect import signature
+
+from tqdm import tqdm
+
 from .scheduler import cosine_with_warmup
+
+
+def _supports_kwarg(fn, name):
+    try:
+        return name in signature(fn).parameters
+    except (TypeError, ValueError):  # signature may fail on some builtins
+        return False
+
 
 @torch.no_grad()
 def evaluate(model, dataloader, device, pad_id):
@@ -18,8 +31,25 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
 
     # ✅ nuove API (evita i FutureWarning)
-    scaler = torch.amp.GradScaler(device_type="cuda") if device == "cuda" else None
-    autocast_ctx = torch.amp.autocast(device_type=device) if device == "cuda" else nullcontext()
+    if device == "cuda":
+        grad_scaler_ctor = torch.amp.GradScaler
+        if _supports_kwarg(grad_scaler_ctor.__init__, "device_type"):
+            scaler = grad_scaler_ctor(device_type="cuda")
+        else:
+            try:
+                scaler = grad_scaler_ctor("cuda")
+            except TypeError:
+                scaler = grad_scaler_ctor()
+
+        autocast_fn = getattr(torch.amp, "autocast", torch.autocast)
+        try:
+            autocast_ctx = autocast_fn(device_type=device)
+        except TypeError:
+            autocast_ctx = autocast_fn(device)
+    else:
+        scaler = None
+        autocast_ctx = nullcontext()
+
     # opzionale: migliora throughput con input variabili
     torch.backends.cudnn.benchmark = True if device == "cuda" else False
 
@@ -39,21 +69,21 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
             lab = batch["labels"].to(device, non_blocking=True)
 
             opt.zero_grad(set_to_none=True)
-            if device == "cuda" and scaler is not None:
-                with autocast_ctx():
-                    out = model(inp, att, labels=lab)                   
-                    loss = out["loss"]
+            
+            with autocast_ctx:
+                out = model(inp, att, lab)
+                loss = out["loss"]
+
+            if scaler is not None:
                 scaler.scale(loss).backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 scaler.step(opt)
                 scaler.update()
             else:
-                with autocast_ctx():
-                    out = model(inp, att, labels=lab)                    
-                    loss = out["loss"]
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step()
+
             pbar.set_postfix({"loss": f"{loss.item():.3f}", "lr": f"{pg['lr']:.2e}"})
             pbar.update(1)
 
@@ -69,6 +99,3 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
             if step >= cfg["max_steps"]: break
     pbar.close()
     return best_val
-
-# util per CPU
-from contextlib import nullcontext
