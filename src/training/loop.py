@@ -37,9 +37,13 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
             scaler = grad_scaler_ctor(device_type="cuda")
         else:
             try:
-                scaler = grad_scaler_ctor("cuda")
-            except TypeError:
                 scaler = grad_scaler_ctor()
+            except TypeError:
+                cuda_amp = getattr(torch.cuda, "amp", None)
+                if cuda_amp is not None and hasattr(cuda_amp, "GradScaler"):
+                    scaler = cuda_amp.GradScaler()
+                else:
+                    raise
 
         autocast_fn = getattr(torch.amp, "autocast", torch.autocast)
         try:
@@ -71,7 +75,7 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
             opt.zero_grad(set_to_none=True)
             
             with autocast_ctx:
-                out = model(inp, att, lab)
+                out = model(inp, att, labels=lab)
                 loss = out["loss"]
 
             if scaler is not None:
