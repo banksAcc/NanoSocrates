@@ -3,9 +3,7 @@ from tqdm import tqdm
 from contextlib import nullcontext
 from inspect import signature
 
-from tqdm import tqdm
-
-from .scheduler import cosine_with_warmup
+from .scheduler import create_scheduler
 
 
 def _supports_kwarg(fn, name):
@@ -64,11 +62,20 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
 
     max_grad_norm = 1.0
 
+    scheduler = create_scheduler(
+        cfg.get("scheduler", "cosine"),
+        warmup_ratio=cfg.get("warmup_ratio"),
+        warmup_steps=cfg.get("warmup_steps"),
+        total_steps=cfg["max_steps"],
+        min_lr_ratio=cfg.get("min_lr_ratio", 0.0),
+    )
+
     while step < cfg["max_steps"]:
         for batch in train_dl:
             step += 1
-            lr_scale = cosine_with_warmup(step, cfg["warmup_steps"], cfg["max_steps"])
-            for pg in opt.param_groups: pg["lr"] = cfg["lr"] * lr_scale
+            lr_scale = scheduler(step)
+            for pg in opt.param_groups:
+                pg["lr"] = cfg["lr"] * lr_scale
 
             inp = batch["input_ids"].to(device, non_blocking=True)
             att = batch["attention_mask"].to(device, non_blocking=True)
