@@ -208,7 +208,7 @@ __marimo__/
 
 #don't pass data in git
 # Ignora tutto ciò che è nella cartella data
-data/
+#data/
 
 # Ma NON ignorare la cartella src/data
 !src/data/

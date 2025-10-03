@@ -26,7 +26,7 @@ enc_layers: 3
 dec_layers: 3
 ff_dim: 1536
 dropout: 0.1
-max_len: 256
+max_len: 512
 
 # training
 batch_size: 16
