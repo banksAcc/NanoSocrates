@@ -16,14 +16,15 @@ def _infer_task(path: str, input_text: str) -> str:
     p = os.path.basename(path).lower()
     if "rdf2text" in p: return "rdf2text"
     if "text2rdf" in p: return "text2rdf"
-    if "rcf1" in p or "completion1" in p: return "rcf1"
-    if "rcf2" in p or "completion2" in p: return "rcf2"
+    if "rdfcomp1" in p or "completion1" in p: return "rdfcomp1"
+    if "rdfcomp2" in p or "completion2" in p: return "rdfcomp2"
+    # 2) prova a inferire dai marker nel testo
     # 2) prova a inferire dai marker nel testo
     t = input_text or ""
     if "<RDF2Text>" in t: return "rdf2text"
     if "<Text2RDF>" in t: return "text2rdf"
-    if "<CONTINUERDF>" in t: return "rcf2"
-    if "<MASK>" in t: return "rcf1"
+    if "<CONTINUERDF>" in t: return "rdfcomp2"
+    if "<MASK>" in t: return "rdfcomp1"
     # 3) fallback generico
     return "unknown"
 

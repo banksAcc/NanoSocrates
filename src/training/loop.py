@@ -10,7 +10,7 @@ def evaluate(model, dataloader, device, pad_id):
         inp = batch["input_ids"].to(device, non_blocking=True)
         att = batch["attention_mask"].to(device, non_blocking=True)
         lab = batch["labels"].to(device, non_blocking=True)
-        out = model(inp, att, lab)
+        out = model(inp, att, labels=lab)
         tot += out["loss"].item(); n += 1
     return tot / max(1, n)
 
@@ -18,9 +18,8 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
 
     # ✅ nuove API (evita i FutureWarning)
-    scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
-    autocast = (lambda: torch.amp.autocast(device_type="cuda")) if device == "cuda" else (lambda: nullcontext())
-
+    scaler = torch.amp.GradScaler(device_type="cuda") if device == "cuda" else None
+    autocast_ctx = torch.amp.autocast(device_type=device) if device == "cuda" else nullcontext()
     # opzionale: migliora throughput con input variabili
     torch.backends.cudnn.benchmark = True if device == "cuda" else False
 
@@ -40,20 +39,21 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
             lab = batch["labels"].to(device, non_blocking=True)
 
             opt.zero_grad(set_to_none=True)
-            if device == "cuda":
-                with torch.amp.autocast(device_type="cuda"):
-                    out = model(inp, att, lab)
+            if device == "cuda" and scaler is not None:
+                with autocast_ctx():
+                    out = model(inp, att, labels=lab)                   
                     loss = out["loss"]
                 scaler.scale(loss).backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                scaler.step(opt); scaler.update()
+                scaler.step(opt)
+                scaler.update()
             else:
-                out = model(inp, att, lab)
-                loss = out["loss"]
+                with autocast_ctx():
+                    out = model(inp, att, labels=lab)                    
+                    loss = out["loss"]
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step()
-
             pbar.set_postfix({"loss": f"{loss.item():.3f}", "lr": f"{pg['lr']:.2e}"})
             pbar.update(1)
 

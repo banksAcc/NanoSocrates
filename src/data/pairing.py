@@ -2,7 +2,8 @@
 Pairing & filtro qualità:
 - Unisce triple (per film) e testo (intro) in un unico record.
 - rimuove duplicati di triple, scarta film con testo mancante o poche triple.
-Output: {"film", "text", "triples": [(s,p,o), ...]}
+- normalizza le triple in forma (s, p, o), sia per relazioni uscenti che entranti.
+Output: {"film", "text", "triples": [(s, p, o), ...]}
 """
 
 from __future__ import annotations
@@ -19,7 +20,12 @@ def pair_and_filter(
 ) -> Iterator[dict]:
     triples_by_film: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
     for r in triples_stream:
-        triples_by_film[r["film"]].append((r["film"], r["p"], r["o"]))
+        direction = r.get("dir", "out")
+        if direction == "in":
+            triple = (r["o"], r["p"], r["film"])
+        else:
+            triple = (r["film"], r["p"], r["o"])
+        triples_by_film[r["film"]].append(triple)
 
     texts_by_film: Dict[str, str] = {}
     for r in texts_stream:
@@ -33,7 +39,7 @@ def pair_and_filter(
             dropped_no_text += 1
             continue
 
-        # rimuove duplicati mantenendo ordine (dict.fromkeys su tuple)
+        # rimuove duplicati mantenendo ordine (dict.fromkeys su tuple (s, p, o))
         triples_unique = list(dict.fromkeys(triples))
         if len(triples_unique) < min_triples:
             dropped_few_triples += 1

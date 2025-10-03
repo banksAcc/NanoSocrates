@@ -25,16 +25,19 @@ class TinySeq2Seq(nn.Module):
     def _subsequent_mask(sz: int, device):
         return torch.triu(torch.ones(sz, sz, dtype=torch.bool, device=device), 1)
 
-    def forward(self, input_ids, attention_mask, labels=None):
+    def forward(self, input_ids, attention_mask, decoder_input_ids=None, labels=None):
         device = input_ids.device
         enc = self.pe(self.emb(input_ids))
         src_kpm = (attention_mask == 0)
 
-        if labels is not None:
-            y_inp = labels[:, :-1]
-            y_tgt = labels[:, 1:]
-        else:
-            y_inp, y_tgt = input_ids, None
+        if decoder_input_ids is None:
+            if labels is None:
+                raise ValueError("decoder_input_ids or labels must be provided")
+            if labels.size(1) < 2:
+                raise ValueError("labels must have length >= 2 to build decoder_input_ids")
+            decoder_input_ids = labels[:, :-1]
+
+        y_inp = decoder_input_ids
 
         dec = self.pe(self.emb(y_inp))
         tgt_mask = self._subsequent_mask(y_inp.size(1), device)
@@ -47,7 +50,16 @@ class TinySeq2Seq(nn.Module):
         logits = self.lm_head(out)
 
         loss = None
-        if y_tgt is not None:
+        
+        if labels is not None:
+            if labels.size(1) == logits.size(1):
+                y_tgt = labels
+            elif labels.size(1) == logits.size(1) + 1:
+                y_tgt = labels[:, 1:]
+            else:
+                raise ValueError("labels length must match decoder_input_ids or be longer by one")
+            logits_for_loss = logits[:, -y_tgt.size(1):, :]
             loss_fct = nn.CrossEntropyLoss(ignore_index=self.pad_id)
-            loss = loss_fct(logits.reshape(-1, logits.size(-1)), y_tgt.reshape(-1))
+            loss = loss_fct(logits_for_loss.reshape(-1, logits_for_loss.size(-1)),
+                            y_tgt.reshape(-1))
         return {"logits": logits, "loss": loss}

@@ -17,7 +17,7 @@ def greedy_decode(model, tok, input_text: str, max_new_tokens=128, device="cpu")
     y = torch.tensor([[start_id]], dtype=torch.long, device=device)
 
     for _ in range(max_new_tokens):
-        out = model(inp, att, y)
+        out = model(inp, att, decoder_input_ids=y)
         next_id = out["logits"][:, -1, :].argmax(-1, keepdim=True)  # greedy
         y = torch.cat([y, next_id], dim=1)
         if eot_id is not None and next_id.item() == eot_id:
