@@ -15,7 +15,9 @@ max_len: 256
 batch_size: 16
 lr: 3e-4
 weight_decay: 0.01
-warmup_steps: 2000
+scheduler: "cosine"
+warmup_ratio: 0.05
+min_lr_ratio: 0.02
 max_steps: 30000
 eval_every: 1000
 save_dir: "checkpoints/baseline"
