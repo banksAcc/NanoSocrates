@@ -62,6 +62,8 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
     pbar = tqdm(total=cfg["max_steps"], desc="train")
     model.train()
 
+    max_grad_norm = 1.0
+
     while step < cfg["max_steps"]:
         for batch in train_dl:
             step += 1
@@ -73,19 +75,23 @@ def train_loop(model, train_dl, val_dl, cfg, device, pad_id):
             lab = batch["labels"].to(device, non_blocking=True)
 
             opt.zero_grad(set_to_none=True)
-            
+
             with autocast_ctx:
                 out = model(inp, att, labels=lab)
                 loss = out["loss"]
 
             if scaler is not None:
                 scaler.scale(loss).backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.unscale_(opt)
+            else:
+                loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+
+            if scaler is not None:
                 scaler.step(opt)
                 scaler.update()
             else:
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step()
 
             pbar.set_postfix({"loss": f"{loss.item():.3f}", "lr": f"{pg['lr']:.2e}"})
