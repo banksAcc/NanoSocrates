@@ -7,7 +7,7 @@ from inspect import signature
 import torch
 from tqdm import tqdm
 
-from .scheduler import cosine_with_warmup
+from .scheduler import create_scheduler
 
 
 def _supports_kwarg(fn, name):
@@ -101,12 +101,45 @@ def train_loop(
     num_epochs = int(cfg["num_epochs"])
     grad_accum = max(1, int(cfg.get("gradient_accumulation_steps", 1)))
     optimizer_steps_per_epoch = math.ceil(steps_per_epoch / grad_accum)
-    warmup_steps = int(cfg.get("warmup_steps", 0))
 
     max_train_steps = int(max_train_steps or 0)
     total_optimizer_steps = max(1, num_epochs * optimizer_steps_per_epoch)
     if max_train_steps > 0:
         total_optimizer_steps = min(total_optimizer_steps, max_train_steps)
+
+    scheduler_name = str(cfg.get("scheduler", "cosine"))
+    warmup_steps_cfg = cfg.get("warmup_steps")
+    warmup_steps = None
+    if warmup_steps_cfg is not None:
+        try:
+            warmup_steps = max(0, int(warmup_steps_cfg))
+        except (TypeError, ValueError):
+            warmup_steps = 0
+    warmup_ratio_cfg = cfg.get("warmup_ratio")
+    try:
+        warmup_ratio = (
+            float(warmup_ratio_cfg) if warmup_ratio_cfg is not None else None
+        )
+    except (TypeError, ValueError):
+        warmup_ratio = None
+    try:
+        min_lr_ratio = float(cfg.get("min_lr_ratio", 0.0))
+    except (TypeError, ValueError):
+        min_lr_ratio = 0.0
+
+    lr_scheduler = create_scheduler(
+        scheduler_name,
+        warmup_ratio=warmup_ratio,
+        warmup_steps=warmup_steps,
+        total_steps=total_optimizer_steps,
+        min_lr_ratio=min_lr_ratio,
+    )
+
+    resolved_warmup_steps = warmup_steps
+    if resolved_warmup_steps is None:
+        resolved_ratio = warmup_ratio if warmup_ratio is not None else 0.0
+        resolved_warmup_steps = int(total_optimizer_steps * resolved_ratio)
+    resolved_warmup_steps = min(resolved_warmup_steps, total_optimizer_steps)
 
     global_step = 0
     best_val = float("inf")
@@ -138,6 +171,18 @@ def train_loop(
             wandb_module.watch(model)
         except Exception as exc:
             tqdm.write(f"[wandb] watch() failed: {exc}")
+
+    scheduler_status = (
+        f"[scheduler] using '{scheduler_name}'"
+        f" (total_steps={total_optimizer_steps}, warmup_steps={resolved_warmup_steps},"
+        f" min_lr_ratio={min_lr_ratio:.3f})"
+    )
+    tqdm.write(scheduler_status)
+    if wandb_logger is not None:
+        try:
+            wandb_logger({"scheduler/name": scheduler_name}, step=0)
+        except Exception as exc:
+            tqdm.write(f"[wandb] log() failed: {exc}")
 
     try:
         for epoch in range(num_epochs):
@@ -180,11 +225,7 @@ def train_loop(
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
                     global_step += 1
-                    lr_scale = cosine_with_warmup(
-                        global_step,
-                        warmup_steps,
-                        total_optimizer_steps,
-                    )
+                    lr_scale = lr_scheduler(global_step)
                     for pg in opt.param_groups:
                         pg["lr"] = cfg["lr"] * lr_scale
 
