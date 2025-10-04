@@ -98,6 +98,10 @@ di training (`configs/train/*.yaml`) impostando almeno `project` e `mode` (`onli
 definire anche `entity`, `run_name`, `tags` e abilitare `watch` per tracciare i gradienti del modello. In caso di problemi di
 connessione, l'inizializzazione effettua automaticamente il fallback in modalità offline.
 
+La stessa sezione `wandb` può essere aggiunta anche ai file di valutazione (`configs/eval/*.yaml`). Quando `mode` non è
+`disabled`, i comandi `python -m scripts.eval_all ...` e `python -m src.cli evaluate ...` aprono una run wandb e caricano in
+automatico le metriche appiattite del report.
+
 ### 2.2 Comandi tipici (Makefile)
 ```bash
 make data        # fetch DBpedia/Wikipedia + build dataset (4 task)
