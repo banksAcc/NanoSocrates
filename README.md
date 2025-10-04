@@ -90,6 +90,12 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### 2.3 Monitoraggio con Weights & Biases (opzionale)
+Il training può loggare automaticamente su [Weights & Biases](https://wandb.ai/). Configura la sezione `wandb` del file YAML
+di training (`configs/train/*.yaml`) impostando almeno `project` e `mode` (`online`, `offline` o `disabled`). È possibile
+definire anche `entity`, `run_name`, `tags` e abilitare `watch` per tracciare i gradienti del modello. In caso di problemi di
+connessione, l'inizializzazione effettua automaticamente il fallback in modalità offline.
+
 ### 2.2 Comandi tipici (Makefile)
 ```bash
 make data        # fetch DBpedia/Wikipedia + build dataset (4 task)
@@ -108,9 +114,10 @@ Vedi esempi in `configs/` per:
 - `data/dbpedia.yaml` — endpoint SPARQL, whitelist predicati, direzione (out|both)  
 - `data/wikipedia.yaml` — lingua, endpoint REST, timeout  
 - `data/build.yaml` — split, maxlen, filtri qualità  
-- `tokenizer/bpe_24k.yaml` — vocab e token speciali  
-- `train/baseline.yaml` — modello, trainer, mixing task  
+- `tokenizer/bpe_24k.yaml` — vocab e token speciali
+- `train/baseline.yaml` — modello, trainer, mixing task
 - `decode/constrained.yaml` — vincoli leggeri per RDF
+- blocco `wandb:` — parametri di logging (project, entity, run_name, mode, tags, watch)
 
 ---
 
