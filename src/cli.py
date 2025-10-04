@@ -1,10 +1,22 @@
 # src/cli.py
-import argparse, torch, random, numpy as np, math
-from src.utils.config import load_yaml, add_common_overrides, apply_overrides
-from src.tokenizer.tokenizer_io import TokWrapper
-from src.training.dataloaders import JsonlSeq2Seq, pad_collate, build_multitask_train, build_concat_val
+import argparse, json, math, random
+from pathlib import Path
+
+import numpy as np
+import torch
+
+from src.decoding.base import decode_to_text
+from src.eval.evaluate import evaluate_from_config, load_model_and_tokenizer
 from src.model.transformer import TinySeq2Seq
+from src.tokenizer.tokenizer_io import TokWrapper
+from src.training.dataloaders import (
+    JsonlSeq2Seq,
+    build_concat_val,
+    build_multitask_train,
+    pad_collate,
+)
 from src.training.loop import train_loop
+from src.utils.config import add_common_overrides, apply_overrides, load_yaml
 
 def set_seed(seed: int):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
@@ -193,6 +205,104 @@ def cmd_train(args):
         f" after {stats['global_step']} steps"
     )
 
+
+def _print_eval_summary(report):
+    print("=== evaluation ===")
+    for split, payload in report.get("splits", {}).items():
+        print(f"[{split}]")
+        if not payload.get("tasks"):
+            print("  (nessun task)")
+            continue
+        if "avg_loss" in payload:
+            print(f"  avg_loss: {payload['avg_loss']:.4f}")
+        for task_name, task_payload in payload["tasks"].items():
+            loss = task_payload.get("loss")
+            samples = task_payload.get("num_samples", 0)
+            loss_repr = f" loss={loss:.4f}" if loss is not None else ""
+            print(f"  - {task_name} (n={samples}){loss_repr}")
+            metrics = task_payload.get("metrics", {})
+            for inner_task, values in metrics.items():
+                items = [
+                    f"{k}={values[k]:.2f}"
+                    for k in sorted(values)
+                    if k != "samples"
+                ]
+                if items:
+                    print(f"      · {inner_task}: {', '.join(items)}")
+                print(f"        samples={values.get('samples', 0)}")
+
+
+def cmd_evaluate(args):
+    cfg = load_yaml(args.cfg)
+    cfg = apply_overrides(cfg, args.override)
+    if args.output:
+        cfg["output_json"] = args.output
+    report = evaluate_from_config(cfg)
+
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        print(f"[evaluate] report salvato in {out_path.resolve()}")
+
+    _print_eval_summary(report)
+
+
+TASK_MARKERS = {
+    "text2rdf": "<Text2RDF>",
+    "rdf2text": "<RDF2Text>",
+    "rdfcomp2": "<CONTINUERDF>",
+    "rdfcomp1": "<MASK>",
+}
+
+
+def _parse_model_overrides(kv_list):
+    cfg = {}
+    return apply_overrides(cfg, kv_list)
+
+
+def cmd_predict(args):
+    if not args.input and not args.input_file:
+        raise ValueError("Specifica --input o --input-file per la predizione")
+
+    text = args.input or ""
+    if args.input_file:
+        with open(args.input_file, "r", encoding="utf-8") as f:
+            text = f.read().strip()
+
+    text = text.strip()
+    if args.task:
+        marker = TASK_MARKERS.get(args.task)
+        if marker and marker not in text:
+            if args.task == "rdfcomp1":
+                if "<MASK>" not in text:
+                    text = f"{text} <MASK>".strip()
+            else:
+                text = f"{text} {marker}".strip()
+
+    overrides = _parse_model_overrides(args.model_override or [])
+    model, tokenizer, device, _ = load_model_and_tokenizer(
+        args.tokenizer,
+        args.checkpoint,
+        device=args.device,
+        overrides=overrides,
+    )
+
+    if args.decoder != "greedy":
+        raise ValueError("Solo decoder 'greedy' supportato al momento")
+
+    output = decode_to_text(
+        model,
+        tokenizer,
+        text,
+        max_new_tokens=args.max_new_tokens,
+        device=device,
+    )
+    cleaned = " ".join(tok for tok in output.split() if tok != "<pad>").strip()
+    print(cleaned)
+
+
 def cmd_overfit(args):
     # usa la stessa pipeline ma con num_epochs/batch_size ridotti via --override
     cmd_train(args)
@@ -208,6 +318,28 @@ def main():
     ap_over = sub.add_parser("overfit")
     add_common_overrides(ap_over)
     ap_over.set_defaults(func=cmd_overfit)
+
+    ap_eval = sub.add_parser("evaluate")
+    add_common_overrides(ap_eval)
+    ap_eval.add_argument("--output", help="Salva il report JSON in questo path")
+    ap_eval.set_defaults(func=cmd_evaluate)
+
+    ap_pred = sub.add_parser("predict")
+    ap_pred.add_argument("--checkpoint", required=True)
+    ap_pred.add_argument("--tokenizer", required=True)
+    ap_pred.add_argument("--task", choices=list(TASK_MARKERS.keys()))
+    ap_pred.add_argument("--input", help="Input testuale o RDF linearizzato")
+    ap_pred.add_argument("--input-file", help="Path file contenente l'input")
+    ap_pred.add_argument("--max-new-tokens", type=int, default=128)
+    ap_pred.add_argument("--device", default="cuda")
+    ap_pred.add_argument("--decoder", default="greedy")
+    ap_pred.add_argument(
+        "--model-override",
+        nargs="*",
+        default=[],
+        help="Override dei parametri modello (es. d_model=512)",
+    )
+    ap_pred.set_defaults(func=cmd_predict)
 
     args = ap.parse_args()
     args.func(args)

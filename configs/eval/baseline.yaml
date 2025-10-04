@@ -1,0 +1,28 @@
+checkpoint: "checkpoints/baseline/best.pt"
+tokenizer_file: "data/vocab/bpe.json"
+max_len: 256
+batch_size: 8
+num_workers: 2
+device: "cuda"
+output_json: "reports/baseline_eval.json"
+
+decoding:
+  max_new_tokens: 160
+
+# path split per task
+tasks:
+  text2rdf:
+    val: "data/processed/text2rdf.val.jsonl"
+    test: "data/processed/text2rdf.test.jsonl"
+  rdf2text:
+    val: "data/processed/rdf2text.val.jsonl"
+    test: "data/processed/rdf2text.test.jsonl"
+  rdfcomp1:
+    val: "data/processed/rdfcomp1.val.jsonl"
+    test: "data/processed/rdfcomp1.test.jsonl"
+  rdfcomp2:
+    val: "data/processed/rdfcomp2.val.jsonl"
+    test: "data/processed/rdfcomp2.test.jsonl"
+
+wandb:
+  mode: "disabled"
