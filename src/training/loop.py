@@ -1,9 +1,10 @@
 import math
 import os
-import torch
+from collections import defaultdict
 from contextlib import nullcontext
 from inspect import signature
 
+import torch
 from tqdm import tqdm
 
 from .scheduler import cosine_with_warmup
@@ -20,14 +21,31 @@ def _supports_kwarg(fn, name):
 def evaluate(model, dataloader, device, pad_id):
     model.eval()
     tot, n = 0.0, 0
+    metric_totals = defaultdict(float)
+    metric_counts = defaultdict(int)
     for batch in dataloader:
         inp = batch["input_ids"].to(device, non_blocking=True)
         att = batch["attention_mask"].to(device, non_blocking=True)
         lab = batch["labels"].to(device, non_blocking=True)
         out = model(inp, att, labels=lab)
-        tot += out["loss"].item()
+        loss = out["loss"].item()
+        tot += loss
         n += 1
-    return tot / max(1, n)
+        metrics = out.get("metrics") if isinstance(out, dict) else None
+        if isinstance(metrics, dict):
+            for name, value in metrics.items():
+                if isinstance(value, (int, float)):
+                    metric_totals[name] += float(value)
+                    metric_counts[name] += 1
+    avg_loss = tot / max(1, n)
+    if metric_totals:
+        averaged = {
+            name: metric_totals[name] / max(1, metric_counts[name])
+            for name in metric_totals
+        }
+        averaged["loss"] = avg_loss
+        return averaged
+    return avg_loss
 
 
 def train_loop(
@@ -40,6 +58,8 @@ def train_loop(
     steps_per_epoch,
     *,
     max_train_steps=0,
+    wandb_run=None,
+    wandb_module=None,
 ):
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
 
@@ -90,102 +110,159 @@ def train_loop(
 
     stop_training = False
 
-    for epoch in range(num_epochs):
-        model.train()
-        opt.zero_grad(set_to_none=True)
-        running_loss = 0.0
-        epoch_bar = tqdm(
-            enumerate(train_dl, start=1),
-            total=steps_per_epoch,
-            desc=f"epoch {epoch + 1}/{num_epochs}",
-            leave=False,
-        )
+    wandb_cfg = cfg.get("wandb") or {}
+    watch_model = bool(wandb_cfg.get("watch", False))
+    wandb_logger = getattr(wandb_run, "log", None) if wandb_run is not None else None
 
-        for batch_idx, batch in epoch_bar:
-            inp = batch["input_ids"].to(device, non_blocking=True)
-            att = batch["attention_mask"].to(device, non_blocking=True)
-            lab = batch["labels"].to(device, non_blocking=True)
+    if watch_model and wandb_module is not None and wandb_run is not None:
+        try:
+            wandb_module.watch(model)
+        except Exception as exc:
+            tqdm.write(f"[wandb] watch() failed: {exc}")
 
-            with autocast_ctx:
-                out = model(inp, att, labels=lab)
-                loss = out["loss"]
+    try:
+        for epoch in range(num_epochs):
+            model.train()
+            opt.zero_grad(set_to_none=True)
+            running_loss = 0.0
+            epoch_bar = tqdm(
+                enumerate(train_dl, start=1),
+                total=steps_per_epoch,
+                desc=f"epoch {epoch + 1}/{num_epochs}",
+                leave=False,
+            )
 
-            loss_to_backward = loss / grad_accum
-            if scaler is not None:
-                scaler.scale(loss_to_backward).backward()
-            else:
-                loss_to_backward.backward()
+            for batch_idx, batch in epoch_bar:
+                inp = batch["input_ids"].to(device, non_blocking=True)
+                att = batch["attention_mask"].to(device, non_blocking=True)
+                lab = batch["labels"].to(device, non_blocking=True)
 
-            running_loss += loss.item()
+                with autocast_ctx:
+                    out = model(inp, att, labels=lab)
+                    loss = out["loss"]
 
-            perform_step = (batch_idx % grad_accum == 0) or (batch_idx == steps_per_epoch)
-            if perform_step:
+                loss_to_backward = loss / grad_accum
                 if scaler is not None:
-                    scaler.unscale_(opt)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-                global_step += 1
-                lr_scale = cosine_with_warmup(
-                    global_step,
-                    warmup_steps,
-                    total_optimizer_steps,
-                )
-                for pg in opt.param_groups:
-                    pg["lr"] = cfg["lr"] * lr_scale
-
-                if scaler is not None:
-                    scaler.step(opt)
-                    scaler.update()
+                    scaler.scale(loss_to_backward).backward()
                 else:
-                    opt.step()
-                opt.zero_grad(set_to_none=True)
+                    loss_to_backward.backward()
 
-                if max_train_steps and global_step >= max_train_steps:
-                    stop_training = True
+                running_loss += loss.item()
 
-            current_lr = opt.param_groups[0]["lr"]
-            avg_loss = running_loss / batch_idx
-            epoch_bar.set_postfix({
-                "loss": f"{avg_loss:.3f}",
-                "lr": f"{current_lr:.2e}",
-                "step": global_step,
-            })
+                perform_step = (batch_idx % grad_accum == 0) or (batch_idx == steps_per_epoch)
+                if perform_step:
+                    if scaler is not None:
+                        scaler.unscale_(opt)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-            if batch_idx >= steps_per_epoch or stop_training:
+                    global_step += 1
+                    lr_scale = cosine_with_warmup(
+                        global_step,
+                        warmup_steps,
+                        total_optimizer_steps,
+                    )
+                    for pg in opt.param_groups:
+                        pg["lr"] = cfg["lr"] * lr_scale
+
+                    if scaler is not None:
+                        scaler.step(opt)
+                        scaler.update()
+                    else:
+                        opt.step()
+                    opt.zero_grad(set_to_none=True)
+
+                    if max_train_steps and global_step >= max_train_steps:
+                        stop_training = True
+
+                current_lr = opt.param_groups[0]["lr"]
+                avg_loss = running_loss / batch_idx
+                epoch_bar.set_postfix({
+                    "loss": f"{avg_loss:.3f}",
+                    "lr": f"{current_lr:.2e}",
+                    "step": global_step,
+                })
+
+                if perform_step and wandb_logger is not None:
+                    log_payload = {
+                        "train/loss": loss.item(),
+                        "train/loss_avg": avg_loss,
+                        "train/epoch": epoch + batch_idx / max(1, steps_per_epoch),
+                        "lr": current_lr,
+                        "global_step": global_step,
+                    }
+                    metrics = out.get("metrics") if isinstance(out, dict) else None
+                    if isinstance(metrics, dict):
+                        for name, value in metrics.items():
+                            if isinstance(value, (int, float)):
+                                log_payload[f"train/{name}"] = float(value)
+                    try:
+                        wandb_logger(log_payload, step=global_step)
+                    except Exception as exc:
+                        tqdm.write(f"[wandb] log() failed: {exc}")
+
+                if batch_idx >= steps_per_epoch or stop_training:
+                    break
+
+            epoch_bar.close()
+
+            val = evaluate(model, val_dl, device, pad_id)
+            if isinstance(val, dict):
+                val_loss = float(val.get("loss", 0.0))
+                extra_val_metrics = {
+                    name: value for name, value in val.items() if name != "loss"
+                }
+            else:
+                val_loss = float(val)
+                extra_val_metrics = {}
+            ckpt = {
+                "model": model.state_dict(),
+                "config": cfg,
+                "epoch": epoch + 1,
+                "global_step": global_step,
+                "val_loss": val_loss,
+                "optimizer": opt.state_dict(),
+            }
+            if scaler is not None:
+                ckpt["scaler"] = scaler.state_dict()
+            torch.save(ckpt, os.path.join(cfg["save_dir"], f"epoch{epoch + 1:03d}.pt"))
+            if val_loss < best_val:
+                best_val = val_loss
+                best_epoch = epoch + 1
+                best_step = global_step
+                torch.save(ckpt, os.path.join(cfg["save_dir"], "best.pt"))
+
+            if wandb_logger is not None:
+                log_payload = {
+                    "val/loss": val_loss,
+                    "val/best_loss": best_val,
+                    "val/best_epoch": best_epoch,
+                }
+                for name, value in extra_val_metrics.items():
+                    if isinstance(value, (int, float)):
+                        log_payload[f"val/{name}"] = float(value)
+                try:
+                    wandb_logger(log_payload, step=global_step)
+                except Exception as exc:
+                    tqdm.write(f"[wandb] log() failed: {exc}")
+
+            model.train()
+            tqdm.write(
+                f"[epoch {epoch + 1}] val loss: {val_loss:.3f} | best: {best_val:.3f}"
+                f" @ step {best_step}"
+            )
+
+            if stop_training:
                 break
 
-        epoch_bar.close()
-
-        val = evaluate(model, val_dl, device, pad_id)
-        ckpt = {
-            "model": model.state_dict(),
-            "config": cfg,
-            "epoch": epoch + 1,
+        return {
+            "best_val": best_val,
+            "best_epoch": best_epoch,
+            "best_step": best_step,
             "global_step": global_step,
-            "val_loss": val,
-            "optimizer": opt.state_dict(),
         }
-        if scaler is not None:
-            ckpt["scaler"] = scaler.state_dict()
-        torch.save(ckpt, os.path.join(cfg["save_dir"], f"epoch{epoch + 1:03d}.pt"))
-        if val < best_val:
-            best_val = val
-            best_epoch = epoch + 1
-            best_step = global_step
-            torch.save(ckpt, os.path.join(cfg["save_dir"], "best.pt"))
-
-        model.train()
-        tqdm.write(
-            f"[epoch {epoch + 1}] val loss: {val:.3f} | best: {best_val:.3f}"
-            f" @ step {best_step}"
-        )
-
-        if stop_training:
-            break
-
-    return {
-        "best_val": best_val,
-        "best_epoch": best_epoch,
-        "best_step": best_step,
-        "global_step": global_step,
-    }
+    finally:
+        if wandb_run is not None and wandb_module is not None:
+            try:
+                wandb_module.finish()
+            except Exception as exc:
+                tqdm.write(f"[wandb] finish() failed: {exc}")
