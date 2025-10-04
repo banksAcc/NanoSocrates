@@ -318,18 +318,279 @@ pytest tests/test_transformer_variants.py
 
 ---
 
-## 11) Linee guida di qualità
+## 11) Playbook CLI completo — end-to-end
+
+Questa sezione raccoglie *tutti* i comandi operativi utili per eseguire l’intera
+pipeline: ingestione, preprocessing, training, valutazione e inference manuale.
+Si assume un terminale posizionato nella root del repository e, salvo diversa
+indicazione, un ambiente virtuale Python attivo.
+
+### 11.1 Preparazione dell’ambiente
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+export PYTHONPATH=src
+```
+
+Verifica del supporto CUDA (opzionale):
+
+```bash
+python - <<'PY'
+import torch
+print("cuda available:", torch.cuda.is_available())
+print("device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu-only")
+PY
+```
+
+### 11.2 Raccolta dati e sanity check
+
+1. **Triple DBpedia**
+   ```bash
+   PYTHONPATH=src python scripts/fetch_dbpedia.py \
+       --config configs/data/dbpedia.yaml \
+       --out data/raw/dbpedia_triples.jsonl
+   ```
+2. **Intro Wikipedia**
+   ```bash
+   PYTHONPATH=src python scripts/fetch_wikipedia.py \
+       --config configs/data/wikipedia.yaml \
+       --in data/raw/dbpedia_triples.jsonl \
+       --out data/raw/wikipedia_intro.jsonl
+   ```
+3. **Controlli rapidi**
+   ```bash
+   wc -l data/raw/dbpedia_triples.jsonl data/raw/wikipedia_intro.jsonl
+   head -n 2 data/raw/dbpedia_triples.jsonl | jq '.'
+   head -n 2 data/raw/wikipedia_intro.jsonl | jq '.'
+   ```
+
+### 11.3 Costruzione dataset multitask & subset toy
+
+```bash
+PYTHONPATH=src python scripts/build_dataset.py \
+    --config configs/data/build.yaml \
+    --dbp data/raw/dbpedia_triples.jsonl \
+    --wiki data/raw/wikipedia_intro.jsonl \
+    --outdir data/processed \
+    --emit_tasks
+```
+
+Post-controlli consigliati:
+
+```bash
+ls data/interim
+wc -l data/processed/text2rdf.*.jsonl
+python - <<'PY'
+from utils.io import read_jsonl
+ex = next(read_jsonl('data/processed/text2rdf.train.jsonl'))
+print(ex['film'])
+print(ex['input'][:120] + '...')
+print(ex['target'][:120] + '...')
+PY
+```
+
+Per generare la versione “toy” (20 film):
+
+```bash
+python -m scripts.build_toy_subset \
+    --pairs data/interim/pairs.all.jsonl \
+    --splits data/interim/splits.json \
+    --processed-dir data/processed \
+    --outdir data/processed/toy \
+    --films 20
+```
+
+### 11.4 Tokenizer: addestramento e verifica
+
+1. Aggiorna `configs/tokenizer/bpe_24k.yaml` con pattern (`glob`), file di
+   output (`out`), `vocab_size`, `min_freq`, `special_tokens`.
+2. Addestra il vocabolario condiviso:
+   ```bash
+   python -m scripts.train_tokenizer --config configs/tokenizer/bpe_24k.yaml
+   ```
+3. Verifica dimensioni e token chiave:
+   ```bash
+   head -n 10 data/vocab/bpe.json
+   python - <<'PY'
+from src.tokenizer.tokenizer_io import TokWrapper
+tok = TokWrapper('data/vocab/bpe.json')
+print('vocab:', tok.vocab_size())
+print('pad id:', tok.pad_id)
+print('SOT id:', tok.token_to_id('<SOT>'))
+PY
+   ```
+
+### 11.5 Training: modalità supportate
+
+| Scenario | Comando |
+|----------|---------|
+| **Smoke test (toy)** | `python -m src.cli overfit --cfg configs/train/baseline.yaml --toy` |
+| **Baseline Text2RDF** | `python -m src.cli train --cfg configs/train/baseline.yaml` |
+| **Multitask 3:3:2:2** | `python -m src.cli train --cfg configs/train/mix_3322.yaml` |
+| **Variant RoPE** | `python -m src.cli train --cfg configs/train/rope_on.yaml` |
+| **Custom override** | `python -m src.cli train --cfg configs/train/baseline.yaml --override lr=1e-4 num_epochs=5 scheduler=linear` |
+
+Suggerimenti operativi:
+
+- Il flag `--toy` redirige automaticamente ai percorsi definiti in
+  `configs/data/toy.yaml`.
+- Usa `--override chiave=valore` per modifiche rapide (inclusi parametri
+  nidificati, es. `wandb.mode=online`). La CLI provvede al casting numerico.
+- `gradient_accumulation_steps` consente batch effettivi più grandi senza
+  saturare la VRAM.
+- Ogni epoca produce un checkpoint (`epochXXX.pt`) e, in caso di miglioramento,
+  aggiorna `best.pt` nella directory `save_dir`.
+
+### 11.6 Monitoraggio, valutazione e logging remoto
+
+Training con W&B online (fallback automatico in offline):
+
+```bash
+python -m src.cli train \
+    --cfg configs/train/mix_3322.yaml \
+    --override wandb.mode=online wandb.project=nanosocrates wandb.run_name=multitask_v1
+```
+
+Valutazione completa (val + test) con report JSON e logging opzionale:
+
+```bash
+python -m scripts.eval_all --cfg configs/eval/baseline.yaml
+python -m src.cli evaluate --cfg configs/eval/baseline.yaml --output reports/baseline_eval.json
+python -m src.cli evaluate \
+    --cfg configs/eval/baseline.yaml \
+    --override wandb.mode=online wandb.project=nanosocrates_eval \
+    --output reports/baseline_eval.json
+jq '.' reports/baseline_eval.json
+```
+
+### 11.7 Inference “online” via CLI
+
+```bash
+python -m src.cli predict \
+    --checkpoint checkpoints/mix3322/best.pt \
+    --tokenizer data/vocab/bpe.json \
+    --task rdf2text \
+    --input "<SOT> <SUBJ> dbr:Inception <PRED> dbo:director <OBJ> dbr:Christopher_Nolan <EOT>"
+
+python -m src.cli predict \
+    --checkpoint checkpoints/mix3322/best.pt \
+    --tokenizer data/vocab/bpe.json \
+    --task text2rdf \
+    --input "Inception is a sci-fi heist film..."
+```
+
+Il comando aggiunge il marker di task se assente e rimuove eventuali `<pad>`
+prima di stampare l’output. Per batch più ampi usa
+`python -m scripts.predict_example.py` con file di input multipli.
+
+### 11.8 Pulizia e reset
+
+- Cancella checkpoint e report: `rm -rf checkpoints/* reports/*`
+- Rigenera i dataset eliminando `data/interim` e `data/processed` (preserva
+  eventualmente `data/processed/toy`)
+- Per riaddestrare il tokenizer da zero elimina `data/vocab/`
+
+---
+
+## 12) Riferimento iperparametri & strategie di tuning
+
+Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
+`eval/`) con note pratiche per il tuning.
+
+### 12.1 Architettura del modello (`configs/train/*.yaml`)
+
+| Chiave | Significato | Range/Note |
+|--------|-------------|-----------|
+| `d_model` | Dimensione delle embedding/hidden | 384–640 consigliato (multipli di 64) |
+| `nhead` | Teste di attenzione | 6 o 8 (deve dividere `d_model`) |
+| `enc_layers` / `dec_layers` | Profondità encoder/decoder | 3–6; oltre richiede gradient checkpointing |
+| `ff_dim` | Dimensione feed-forward | 1536–2560 (≈4× `d_model`) |
+| `dropout` | Dropout condiviso MHA/FFN | 0.0–0.2 |
+| `max_len` | Sequenza massima gestita | 256 (baseline) / 512 (triple lunghe) |
+| `use_rope` | Rotary Position Embeddings | Alternativa alle sinusoidali classiche |
+| `use_mla` | Multihead Latent Attention | Richiede `CustomTransformer` in `src/model/layers.py` |
+| `interleave_ratio` | Mix MLA ↔ attenzione classica | 0.0 = disattivato, 0.5 = mix, 1.0 = solo MLA |
+| `enable_entity_spans` | Propaga span mask nei batch | Necessario per RDF Completion 1 |
+| `compute_span_metrics` | Aggiunge metriche sugli span | Impatta marginalmente sui tempi |
+
+### 12.2 Ottimizzazione & controllo training
+
+| Chiave | Descrizione | Suggerimenti |
+|--------|-------------|--------------|
+| `batch_size` | Dimensione batch logico | Con 16 GB VRAM: 16–24; abbassa e aumenta `gradient_accumulation_steps` se memoria insufficiente |
+| `gradient_accumulation_steps` | Accumulo gradiente | 2–4 per simulare batch grandi |
+| `num_epochs` | Epoche massime | 8–12 per training da zero; early-stop gestisce uscita anticipata |
+| `lr` | Learning rate iniziale | 1e-4–5e-4 (training) / 3e-5 (fine-tuning) |
+| `weight_decay` | Regolarizzazione L2 | 0.0–0.05 |
+| `scheduler` | Tipo scheduler | `cosine` o `linear` supportati |
+| `warmup_ratio` / `warmup_steps` | Warmup iniziale | Ratio 0.02–0.08 (override `warmup_steps` se specificato) |
+| `min_lr_ratio` | LR minimo relativo | 0.01–0.05 per evitare LR→0 nel cosine |
+| `early_stopping.patience` | Epoche senza miglioramento | 2–4 consigliate |
+| `early_stopping.min_delta` | Miglioramento minimo | 0.0–0.01 |
+| `overfit_one_batch` | Debug di pipeline | Attivato automaticamente da `src.cli overfit` |
+
+### 12.3 Gestione dati & mixing multitask
+
+| Chiave | Descrizione | Note |
+|--------|-------------|------|
+| `train_file` / `val_file` | Path singolo task | Usati nei preset baseline |
+| `datasets` | Lista task con pesi | `weight` guida il sampler proporzionale (es. 3:3:2:2) |
+| `max_len` | Troncamento input/target | Deve corrispondere al valore del tokenizer |
+| Flag CLI `--toy` | Dataset rapido | Applica automaticamente `configs/data/toy.yaml` |
+
+### 12.4 Logging & strumentazione
+
+| Chiave | Descrizione |
+|--------|-------------|
+| `wandb.mode` | `online`, `offline`, `disabled`; fallback gestito dalla CLI |
+| `wandb.project` / `entity` | Identificativi workspace W&B |
+| `wandb.run_name` | Nome leggibile della run |
+| `wandb.tags` | Lista di tag (filtri dashboard) |
+| `wandb.watch` | Se `true`, abilita `wandb.watch` sul modello |
+
+### 12.5 Config valutazione (`configs/eval/*.yaml`)
+
+- `checkpoint`, `tokenizer_file`, `device`: cosa caricare e dove inferire.
+- `batch_size`, `num_workers`: throughput inferenza.
+- `decoding.max_new_tokens`: limite della generazione autoregressiva.
+- `enable_entity_spans`: calcola metriche MASK se il checkpoint le supporta.
+- Blocchi `tasks.*.val/test`: percorsi per split; è possibile escludere task
+  per valutazioni parziali.
+
+### 12.6 Strategie pratiche di tuning
+
+- **RDF2Text (BLEU/ROUGE)**: aumenta `d_model` a 512, porta
+  `enc_layers`/`dec_layers` a 4–5, riduci `dropout` a 0.05, abilita logging W&B
+  per monitorare le metriche.
+- **Text2RDF (precision/F1)**: prova `scheduler=linear` con
+  `warmup_ratio=0.08` e `min_lr_ratio=0.02`; controlla che i marker di task
+  siano sempre presenti nell’input.
+- **RDF Completion 1 (mask accuracy)**: assicurati di avere
+  `enable_entity_spans=true` e `compute_span_metrics=true`; valuta batch più
+  piccoli per ridurre il rumore sugli span lunghi.
+- **RDF Completion 2 (triple F1)**: sperimenta `use_mla=true` con
+  `interleave_ratio=0.3` per enfatizzare le dipendenze latenti.
+- **Diagnostica rapida**: `python -m src.cli overfit --cfg ... --toy` deve far
+  scendere la loss <0.05; in caso contrario ricontrolla tokenizer, dataset e
+  sequenza di token speciali.
+
+---
+
+## 13) Linee guida di qualità
 Whitelist predicati, split per film (no leakage), max seq 256–512, logging di parsing error/outlier.
 
 ---
 
-## 12) Licenze & Dati
+## 14) Licenze & Dati
 DBpedia/Wikipedia: rispettare le licenze; mantenere solo abstract/intro.
 
 ---
 
-## 13) Roadmap esecutiva (riassunto)
-1. `scripts/fetch_dbpedia.py` + `scripts/fetch_wikipedia.py` → `data/raw/`  
-2. `scripts/build_dataset.py` → `data/interim/pairs.jsonl` + `data/processed/*.jsonl`  
-3. `scripts/train_tokenizer.py` → `data/vocab/`  
+## 15) Roadmap esecutiva (riassunto)
+1. `scripts/fetch_dbpedia.py` + `scripts/fetch_wikipedia.py` → `data/raw/`
+2. `scripts/build_dataset.py` → `data/interim/pairs.jsonl` + `data/processed/*.jsonl`
+3. `scripts/train_tokenizer.py` → `data/vocab/`
 4. `scripts/sanity_overfit.py` → training → eval → ablation
