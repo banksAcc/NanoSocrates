@@ -49,6 +49,10 @@ seed: 42
 device: "cuda"
 num_workers: 4
 
+early_stopping:
+  patience: 3
+  min_delta: 0.0
+
 wandb:
   mode: "disabled"
   project: "nanosocrates"

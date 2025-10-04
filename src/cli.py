@@ -40,6 +40,19 @@ def _coerce_cfg_types(cfg: dict):
         if k in cfg:
             try: _as_int(k)
             except: pass
+    if "early_stopping" in cfg and isinstance(cfg["early_stopping"], dict):
+        es = cfg["early_stopping"]
+        try:
+            if "patience" in es:
+                es["patience"] = int(es["patience"])
+        except Exception:
+            pass
+        try:
+            if "min_delta" in es:
+                es["min_delta"] = float(es["min_delta"])
+        except Exception:
+            pass
+        cfg["early_stopping"] = es
     return cfg
 
 def cmd_train(args):

@@ -33,6 +33,10 @@ seed: 42
 device: "cuda"        # oppure "cpu"
 num_workers: 4
 
+early_stopping:
+  patience: 3
+  min_delta: 0.0
+
 wandb:
   mode: "disabled"      # usa "online" o "offline" per attivare il logging
   project: "nanosocrates"

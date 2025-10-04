@@ -113,6 +113,19 @@ def train_loop(
     best_epoch = 0
     best_step = 0
 
+    early_cfg = cfg.get("early_stopping") or {}
+    try:
+        patience = int(early_cfg.get("patience", 0))
+    except (TypeError, ValueError):
+        patience = 0
+    try:
+        min_delta = float(early_cfg.get("min_delta", 0.0))
+    except (TypeError, ValueError):
+        min_delta = 0.0
+    min_delta = max(0.0, min_delta)
+    patience = max(0, patience)
+    epochs_since_improvement = 0
+
     stop_training = False
     overfit_one_batch = bool(cfg.get("overfit_one_batch", False))
 
@@ -239,17 +252,27 @@ def train_loop(
             if scaler is not None:
                 ckpt["scaler"] = scaler.state_dict()
             torch.save(ckpt, os.path.join(cfg["save_dir"], f"epoch{epoch + 1:03d}.pt"))
-            if val_loss < best_val:
+            improved = val_loss < (best_val - min_delta)
+            if improved:
                 best_val = val_loss
                 best_epoch = epoch + 1
                 best_step = global_step
+                epochs_since_improvement = 0
                 torch.save(ckpt, os.path.join(cfg["save_dir"], "best.pt"))
+            else:
+                if not math.isinf(best_val):
+                    epochs_since_improvement += 1
 
             if wandb_logger is not None:
                 log_payload = {
                     "val/loss": val_loss,
                     "val/best_loss": best_val,
                     "val/best_epoch": best_epoch,
+                    "early_stopping/epochs_since_improvement": epochs_since_improvement,
+                    "early_stopping/patience": patience,
+                    "early_stopping/triggered": bool(
+                        patience > 0 and epochs_since_improvement >= patience
+                    ),
                 }
                 for name, value in extra_val_metrics.items():
                     if isinstance(value, (int, float)):
@@ -260,10 +283,21 @@ def train_loop(
                     tqdm.write(f"[wandb] log() failed: {exc}")
 
             model.train()
-            tqdm.write(
+            status = (
                 f"[epoch {epoch + 1}] val loss: {val_loss:.3f} | best: {best_val:.3f}"
                 f" @ step {best_step}"
             )
+            status += f" | no_improve={epochs_since_improvement}"
+            if patience > 0:
+                status += f"/{patience}"
+            tqdm.write(status)
+
+            if patience > 0 and epochs_since_improvement >= patience:
+                stop_training = True
+                tqdm.write(
+                    "[early-stopping] pazienza esaurita: training interrotto per mancato"
+                    " miglioramento."
+                )
 
             if stop_training:
                 break
