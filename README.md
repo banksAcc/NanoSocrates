@@ -13,73 +13,54 @@ Il progetto è *compliant* alla traccia: **token speciali**, **tokenizer BPE fro
 ```
 nanosocrates/
 ├─ README.md
-├─ .gitignore
-├─ requirements.txt              # torch, tokenizers, datasets, etc.
+├─ requirements.txt              # dipendenze Python principali
 ├─ configs/
-│  ├─ base.yaml                  # iperparametri globali
+│  ├─ base.yaml                  # preset globale con default condivisi
 │  ├─ data/
-│  │  ├─ dbpedia.yaml            # endpoint, predicati, limiti
-│  │  ├─ wikipedia.yaml          # API, lingua, timeout
-│  │  ├─ build.yaml              # split, maxlen, filtri qualità
-│  │  └─ toy.yaml                # percorsi subset toy (20 film)
-│  ├─ tokenizer/
-│  │  └─ bpe_24k.yaml            # vocabolario, special token
-│  ├─ train/
-│  │  ├─ baseline.yaml           # 4e+4d, d=512, ratio 3:3:2:2
-│  │  ├─ rope_on.yaml            # ablation
-│  │  └─ mix_2233.yaml           # ablation mixing
-│  └─ decode/
-│     └─ constrained.yaml        # vincoli leggeri sui tag RDF
-├─ data/
-│  ├─ raw/                       # dump SPARQL/abstracts per film
-│  ├─ interim/                   # intermedio (pairing, pulizia)
-│  ├─ processed/                 # jsonl per task (input,target)
-│  └─ vocab/                     # tokenizer (vocab.json, merges.txt)
-├─ scripts/
-│  ├─ fetch_dbpedia.py           # scarica triple
-│  ├─ fetch_wikipedia.py         # scarica abstract/intro
-│  ├─ build_dataset.py           # crea i 4 task jsonl
-│  ├─ build_toy_subset.py        # genera i JSONL toy (20 film)
-│  ├─ train_tokenizer.py         # addestra BPE
-│  ├─ sanity_overfit.py          # sanity su 1 batch
-│  └─ eval_all.py                # lancia tutte le metriche
-├─ src/
-│  ├─ __init__.py
-│  ├─ cli.py                     # entrypoint a riga di comando
-│  ├─ utils/
-│  │  ├─ io.py                   # lettura/scrittura jsonl, cache, hashing
-│  │  ├─ text.py                 # normalizzazioni, cleaning
-│  │  ├─ config.py               # caricamento YAML, override da CLI
-│  │  └─ logging.py              # loggers, timers, progress
-│  ├─ data/
-│  │  ├─ dbpedia.py              # SPARQL query helpers
-│  │  ├─ wikipedia.py            # fetch e parsing paragrafi
-│  │  ├─ pairing.py              # unione {{text, triples}} per film
-│  │  ├─ serialization.py        # linearizzazione RDF + parser inverso
-│  │  └─ builders.py             # generatori dataset per i 4 task
-│  ├─ tokenizer/
-│  │  ├─ train_bpe.py            # libreria per scripts/train_tokenizer.py
-│  │  └─ tokenizer_io.py         # load/save tokenizer + special token
-│  ├─ model/
-│  │  ├─ transformer.py          # encoder–decoder micro
-│  │  ├─ layers.py               # MHA/FFN, pos enc (sin, RoPE)
-│  │  └─ losses.py               # label smoothing, masking comp-1
-│  ├─ training/
-│  │  ├─ dataloaders.py          # collate per task, spanned masking
-│  │  ├─ loop.py                 # training loop multi-task (AdamW + sched)
-│  │  └─ scheduler.py            # warmup + cosine
-│  ├─ decoding/
-│  │  ├─ base.py                 # greedy/beam/top-k
-│  │  └─ constrained.py          # vincoli leggeri su <SUBJ><PRED><OBJ>
+│  │  ├─ build.yaml              # parametri per costruzione dataset
+│  │  ├─ dbpedia.yaml            # endpoint, predicati, limiti SPARQL
+│  │  ├─ toy.yaml                # remapping verso data/processed/toy
+│  │  └─ wikipedia.yaml          # API REST, lingua, timeout
+│  ├─ decode/
+│  │  └─ constrained.yaml        # vincoli leggeri durante il decoding
 │  ├─ eval/
-│  │  ├─ metrics.py              # BLEU, ROUGE-L, METEOR; F1 triple; Acc
-│  │  └─ evaluate.py             # orchestratore valutazione per-task
-│  └─ plots/
-│     └─ curves.py               # grafici loss/metriche (opzionale)
+│  │  └─ baseline.yaml           # esempio completo di valutazione
+│  ├─ tokenizer/
+│  │  └─ bpe_24k.yaml            # addestramento tokenizer + token speciali
+│  └─ train/
+│     ├─ baseline.yaml           # modello standard 3e+3d
+│     ├─ mix_3322.yaml           # mixing alternativo per i task
+│     └─ rope_on.yaml            # variante con Rotary Positional Embeddings
+├─ data/                         # directory popolata dagli script (raw/interim/processed/vocab)
+├─ scripts/
+│  ├─ build_dataset.py           # crea dataset e task JSONL (richiede PYTHONPATH=src)
+│  ├─ build_toy_subset.py        # genera il sottoinsieme toy (include setup PYTHONPATH interno)
+│  ├─ eval_all.py                # valutazione multi-task
+│  ├─ fetch_dbpedia.py           # scarica triple DBpedia (richiede PYTHONPATH=src)
+│  ├─ fetch_wikipedia.py         # scarica abstract intro (richiede PYTHONPATH=src)
+│  ├─ predict_example.py         # inference minimale da riga di comando
+│  ├─ sanity_overfit.py          # scorciatoia per l'overfit di un batch
+│  └─ train_tokenizer.py         # addestra il tokenizer BPE
+├─ src/
+│  ├─ cli.py                     # entrypoint unificato (train/overfit/evaluate/predict)
+│  ├─ data/                      # fetch DBpedia/Wikipedia, pairing, serializzazione
+│  ├─ decoding/                  # strategie di decoding e vincoli
+│  ├─ eval/                      # metriche e orchestratore valutazione
+│  ├─ model/                     # TinySeq2Seq, layer MHA/MLA, perdite
+│  ├─ tokenizer/                 # wrapper IO e libreria per BPE
+│  ├─ training/                  # dataloader multitask, loop, scheduler
+│  ├─ utils/                     # config YAML, IO, logging, integrazione W&B
+│  └─ plots/curves.py            # placeholder per grafici (stub vuoto)
 └─ tests/
-   ├─ test_serialization.py      # round-trip linearize/parse
-   ├─ test_metrics.py            # scorer triple e BLEU/ROUGE
-   └─ test_builders.py           # dataset 4 task: schemi e lunghezze
+   ├─ integration/               # scenari end-to-end
+   ├─ test_builders.py           # validazione dataset JSONL
+   ├─ test_decoding.py           # vincoli e decoding greedy
+   ├─ test_dataloaders.py        # collate + span masking
+   ├─ test_losses.py             # loss multi-task/spans
+   ├─ test_metrics.py            # metriche BLEU/ROUGE/F1
+   ├─ test_scheduler.py          # scheduler cosine+warmup
+   ├─ test_serialization.py      # linearizzazione RDF ↔ testo
+   └─ test_transformer_variants.py # controlli sulle ablation
 ```
 
 ---
@@ -92,60 +73,104 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2.3 Monitoraggio con Weights & Biases (opzionale)
-Il training può loggare automaticamente su [Weights & Biases](https://wandb.ai/). Configura la sezione `wandb` del file YAML
-di training (`configs/train/*.yaml`) impostando almeno `project` e `mode` (`online`, `offline` o `disabled`). È possibile
-definire anche `entity`, `run_name`, `tags` e abilitare `watch` per tracciare i gradienti del modello. In caso di problemi di
-connessione, l'inizializzazione effettua automaticamente il fallback in modalità offline.
+> Suggerimento: i comandi `scripts/*.py` che importano `utils.*` richiedono
+> `PYTHONPATH=src`. Imposta una volta `export PYTHONPATH=src` (bash/zsh) oppure
+> anteponi `PYTHONPATH=src` al singolo comando.
 
-La stessa sezione `wandb` può essere aggiunta anche ai file di valutazione (`configs/eval/*.yaml`). Quando `mode` non è
-`disabled`, i comandi `python -m scripts.eval_all ...` e `python -m src.cli evaluate ...` aprono una run wandb e caricano in
-automatico le metriche appiattite del report.
+### 2.2 Pipeline base (dati → tokenizer → training → valutazione)
+1. **Raccogli le sorgenti**
+   ```bash
+   export PYTHONPATH=src                                    # abilita gli import locali
+   PYTHONPATH=src python scripts/fetch_dbpedia.py \
+       --config configs/data/dbpedia.yaml \
+       --out data/raw/dbpedia_triples.jsonl
 
-### 2.2 Comandi tipici (Makefile)
-```bash
-make data        # fetch DBpedia/Wikipedia + build dataset (4 task)
-make tokenizer   # train BPE 24k + special tokens
-make sanity      # overfit su 1 batch (sanity check)
-make train       # training multi-task baseline
-make eval        # valutazione completa per task
-make plots       # grafici di training (opzionale)
-```
+   PYTHONPATH=src python scripts/fetch_wikipedia.py \
+       --config configs/data/wikipedia.yaml \
+       --in data/raw/dbpedia_triples.jsonl \
+       --out data/raw/wikipedia_intro.jsonl
+   ```
+2. **Costruisci il dataset multi-task**
+   ```bash
+   PYTHONPATH=src python scripts/build_dataset.py \
+       --config configs/data/build.yaml \
+       --dbp data/raw/dbpedia_triples.jsonl \
+       --wiki data/raw/wikipedia_intro.jsonl \
+       --outdir data/processed \
+       --emit_tasks
+   ```
+3. **Addestra (o aggiorna) il tokenizer**
+   ```bash
+   python -m scripts.train_tokenizer --config configs/tokenizer/bpe_24k.yaml
+   ```
+4. **Avvia il training**
+   ```bash
+   python -m src.cli train --cfg configs/train/baseline.yaml
+   ```
+5. **Valuta il checkpoint** (report JSON + metriche aggregate)
+   ```bash
+   python -m scripts.eval_all --cfg configs/eval/baseline.yaml
+   # equivalente CLI unificata
+   python -m src.cli evaluate --cfg configs/eval/baseline.yaml --output reports/baseline_eval.json
+   ```
 
-Oppure usa direttamente gli entrypoint Python:
+### 2.3 Tutorial — sottoinsieme toy (20 film)
+1. Assicurati di avere `data/interim/pairs.all.jsonl` e `data/interim/splits.json`
+   generati da `scripts/build_dataset.py`.
+2. Rigenera i JSONL ridotti:
+   ```bash
+   python -m scripts.build_toy_subset \
+       --pairs data/interim/pairs.all.jsonl \
+       --splits data/interim/splits.json \
+       --processed-dir data/processed \
+       --outdir data/processed/toy \
+       --films 20
+   ```
+3. Esegui training e valutazione puntando ai nuovi file con il flag `--toy`:
+   ```bash
+   python -m src.cli train --cfg configs/train/baseline.yaml --toy
+   python -m scripts.eval_all --cfg configs/eval/baseline.yaml --toy
+   ```
 
-```bash
-python -m scripts.eval_all --cfg configs/eval/baseline.yaml
-python -m src.cli evaluate --cfg configs/eval/baseline.yaml
-python -m src.cli predict --checkpoint checkpoints/baseline/best.pt \
-    --tokenizer data/vocab/bpe.json --task text2rdf --input "Trama..."
-python -m scripts.sanity_overfit --cfg configs/train/baseline.yaml
-```
+### 2.4 Tutorial — sanity check (overfit di un batch)
+1. Riusa la configurazione standard e forza gli override automatici:
+   ```bash
+   python -m src.cli overfit --cfg configs/train/baseline.yaml --toy
+   ```
+   Il comando imposta `num_epochs=1`, `max_steps=1` e `overfit_one_batch=true`,
+   mantenendo qualsiasi ulteriore `--override` passato da CLI.
+2. In alternativa esiste lo script dedicato:
+   ```bash
+   python -m scripts.sanity_overfit --cfg configs/train/baseline.yaml --toy
+   ```
+3. Verifica che la loss scenda rapidamente verso ~0: conferma che tokenizer,
+   dataloader, loop di training e logging siano correttamente collegati.
 
-### 2.5 Sanity check: overfit di un singolo batch
-
-Il comando `src.cli overfit` (e lo script di comodo `python -m scripts.sanity_overfit`) forzano automaticamente:
-
-- `num_epochs = 1`
-- `max_steps = 1` (un solo aggiornamento dell'ottimizzatore)
-- `overfit_one_batch = true` (campiona un unico batch con `SubsetRandomSampler`)
-
-Questo consente di verificare rapidamente che il modello sia in grado di sovradattarsi a pochi esempi e che l'intera pipeline
-di training (tokenizer, dataloader, loop, logging) sia correttamente configurata. Sono comunque accettati override addizionali
-da CLI, ad esempio per puntare al sottoinsieme toy: `python -m scripts.sanity_overfit --cfg configs/train/baseline.yaml --toy`.
-
-### 2.4 Toy set (debug rapido)
-
-Per esperimenti lampo è disponibile un sottoinsieme da 20 film:
-
-```bash
-python -m scripts.build_toy_subset                # rigenera data/processed/toy/*.jsonl
-python -m src.cli train --cfg configs/train/baseline.yaml --toy
-python -m scripts.eval_all --cfg configs/eval/baseline.yaml --toy
-```
-
-Il flag `--toy` reindirizza automaticamente i path dei dataset ai JSONL in
-`data/processed/toy/` (vedi `configs/data/toy.yaml`).
+### 2.5 Tutorial — valutazione con Weights & Biases
+1. Modifica il config (o usa gli override) per abilitare W&B.
+   ```bash
+   python -m src.cli train \
+       --cfg configs/train/baseline.yaml \
+       --override wandb.mode=online wandb.project=nanosocrates-demo wandb.run_name=debug
+   ```
+   I campi supportati sono `mode` (`online`, `offline`, `disabled`), `project`,
+   `entity`, `run_name`, `tags` (lista) e `watch` (bool). Se la connessione fallisce
+   viene eseguito automaticamente il fallback in modalità offline.
+2. Per loggare anche la valutazione usa lo stesso approccio:
+   ```bash
+   python -m scripts.eval_all \
+       --cfg configs/eval/baseline.yaml \
+       --override wandb.mode=online wandb.project=nanosocrates-demo
+   ```
+   Le metriche vengono appiattite tramite `src.utils.wandb_utils.flatten_eval_metrics`
+   e inviate come singolo step alla run già configurata.
+3. Per eseguire la valutazione dal CLI unificato mantenendo gli override:
+   ```bash
+   python -m src.cli evaluate \
+       --cfg configs/eval/baseline.yaml \
+       --override wandb.mode=online wandb.project=nanosocrates-demo \
+       --output reports/baseline_eval.json
+   ```
 
 ---
 
@@ -185,8 +210,13 @@ Addestra **BPE 24k** su (testo + RDF linearizzato) con i token speciali. Artefat
 ---
 
 ## 6) Modello & Training (Step 5–6)
-Micro Transformer (4e+4d, d=512, 8h, FFN 2048, dropout 0.1).
-Training multi-task mixing **3:3:2:2** (T2RDF:R2Text:Comp1:Comp2), AdamW, warmup+cosine, grad-accum. **Sanity**: toy + overfit 1 batch.
+Il modello di riferimento è `TinySeq2Seq` con **3 encoder layer + 3 decoder layer**
+(`d_model=384`, `nhead=6`, `ff_dim=1536`, dropout `0.1`). Il training baseline
+(`configs/train/baseline.yaml`) usa AdamW con scheduler cosine + warmup e opera
+su un singolo task (Text2RDF). Per allenare sui quattro task insieme utilizza
+`configs/train/mix_3322.yaml`, che imposta il mixing **3:3:2:2** su
+Text2RDF/RDF2Text/RDFComp1/RDFComp2. Gli script di sanity (`src.cli overfit` o
+`scripts/sanity_overfit.py`) permettono di validare rapidamente la pipeline.
 
 ### 6.1 Varianti posizionali/attenzione
 I config in `configs/train/*.yaml` espongono tre interruttori per sperimentare
@@ -207,8 +237,11 @@ come attivare/ disattivare i flag per le ablation.
 ---
 
 ## 7) Decoding & Post-processing (Step 7)
-Beam=4, length_penalty=0.9, **vincoli leggeri** sui tag RDF (opzionali).  
-Parser → triple (S,P,O), normalizzazione prefissi, dedup. **Validity ≥ 95%** su dev.
+Il modulo `src/decoding/base.py` implementa il decoding **greedy** autoregressivo
+con stop su `<EOT>` (se presente) e filtraggio del token `<pad>`. Il file
+`src/decoding/constrained.py` è attualmente uno **stub** pronto per ospitare
+vincoli aggiuntivi sul formato RDF. Il post-processing delle triple e la
+normalizzazione dei prefissi sono gestiti a livello di dataset (`src/data/serialization.py`).
 
 ---
 
@@ -248,7 +281,7 @@ subcomando `predict` oppure lo script di esempio `scripts/predict_example.py`:
 python -m src.cli predict --checkpoint checkpoints/baseline/best.pt \
     --tokenizer data/vocab/bpe.json --task text2rdf --input "Plot ..."
 
-python scripts/predict_example.py --checkpoint checkpoints/baseline/best.pt \
+python -m scripts.predict_example --checkpoint checkpoints/baseline/best.pt \
     --tokenizer data/vocab/bpe.json --task rdf2text --input "<SOT> ... <RDF2Text>"
 ```
 
@@ -258,11 +291,10 @@ dataset se non già presente nell'input.
 ---
 
 ## 9) Ablation (Step 9) — breve e mirata
-- **Positional**: sinusoidale vs **RoPE**
-- **Attention**: standard vs **MLA** (mixabile via `interleave_ratio`)
-- **Mixing**: 3:3:2:2 vs 2:2:3:3
-- **Decoding**: libero vs **vincoli leggeri**
-Metriche: ROUGE-L, F1 triple, Accuracy Comp-1, validity rate, costo/epoch.
+- **Positional**: sinusoidale (`baseline.yaml`) vs **RoPE** (`rope_on.yaml`)
+- **Attention**: standard vs **MLA** (abilita `use_mla` e calibra `interleave_ratio`)
+- **Mixing**: single-task (`baseline.yaml`) vs multi-task **3:3:2:2** (`mix_3322.yaml`)
+Metriche: ROUGE-L, F1 triple, Accuracy Comp-1, costo/epoch.
 
 Esegui i test rapidi sulle varianti con:
 
