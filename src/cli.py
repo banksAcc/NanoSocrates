@@ -1,10 +1,12 @@
 # src/cli.py
-import argparse, torch, random, numpy as np, math
+import argparse, json, torch, random, numpy as np, math
 from src.utils.config import load_yaml, add_common_overrides, apply_overrides
 from src.tokenizer.tokenizer_io import TokWrapper
 from src.training.dataloaders import JsonlSeq2Seq, pad_collate, build_multitask_train, build_concat_val
 from src.model.transformer import TinySeq2Seq
 from src.training.loop import train_loop
+from src.eval.evaluate import evaluate_from_config
+from src.utils.wandb_logging import _flatten_for_logging, _maybe_init_wandb
 
 def set_seed(seed: int):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
@@ -29,6 +31,19 @@ def _coerce_cfg_types(cfg: dict):
             try: _as_int(k)
             except: pass
     return cfg
+
+
+def _log_eval_to_wandb(wandb_run, result):
+    if wandb_run is None:
+        return
+    payload = {
+        "summary": result.get("summary", {}),
+        "metrics": result.get("metrics", {}),
+    }
+    flat = _flatten_for_logging(payload)
+    if flat:
+        wandb_run.log(flat)
+
 
 def cmd_train(args):
     # 1) carica config + override da CLI e sistema i tipi
@@ -197,6 +212,20 @@ def cmd_overfit(args):
     # usa la stessa pipeline ma con num_epochs/batch_size ridotti via --override
     cmd_train(args)
 
+
+def cmd_evaluate(args):
+    cfg = load_yaml(args.cfg)
+    cfg = apply_overrides(cfg, args.override)
+
+    wandb_run, _wandb_module = _maybe_init_wandb(cfg.get("wandb"), run_config=cfg)
+    try:
+        result = evaluate_from_config(cfg)
+        _log_eval_to_wandb(wandb_run, result)
+        print(json.dumps(result, indent=2, sort_keys=True))
+    finally:
+        if wandb_run is not None:
+            wandb_run.finish()
+
 def main():
     ap = argparse.ArgumentParser(prog="nanosocrates")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -208,6 +237,10 @@ def main():
     ap_over = sub.add_parser("overfit")
     add_common_overrides(ap_over)
     ap_over.set_defaults(func=cmd_overfit)
+
+    ap_eval = sub.add_parser("evaluate")
+    add_common_overrides(ap_eval)
+    ap_eval.set_defaults(func=cmd_evaluate)
 
     args = ap.parse_args()
     args.func(args)
