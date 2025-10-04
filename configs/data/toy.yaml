@@ -1,0 +1,28 @@
+# Configurazione del sottoinsieme "toy" (20 film).
+# Generato con ``python -m scripts.build_toy_subset``.
+root: "data/processed/toy"
+manifest: "data/processed/toy/manifest.json"
+films: 20
+splits:
+  train: 12
+  val: 4
+  test: 4
+
+# Percorsi per i 4 task principali (stessa convenzione dei JSONL completi).
+tasks:
+  text2rdf:
+    train: "data/processed/toy/text2rdf.train.jsonl"
+    val: "data/processed/toy/text2rdf.val.jsonl"
+    test: "data/processed/toy/text2rdf.test.jsonl"
+  rdf2text:
+    train: "data/processed/toy/rdf2text.train.jsonl"
+    val: "data/processed/toy/rdf2text.val.jsonl"
+    test: "data/processed/toy/rdf2text.test.jsonl"
+  rdfcomp1:
+    train: "data/processed/toy/rdfcomp1.train.jsonl"
+    val: "data/processed/toy/rdfcomp1.val.jsonl"
+    test: "data/processed/toy/rdfcomp1.test.jsonl"
+  rdfcomp2:
+    train: "data/processed/toy/rdfcomp2.train.jsonl"
+    val: "data/processed/toy/rdfcomp2.val.jsonl"
+    test: "data/processed/toy/rdfcomp2.test.jsonl"
