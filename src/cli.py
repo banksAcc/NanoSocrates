@@ -64,20 +64,46 @@ def cmd_train(args):
     num_workers = int(cfg.get("num_workers", 4))
     pin = (device == "cuda")
 
+    enable_entity_spans = bool(cfg.get("enable_entity_spans", False))
+
     if "datasets" in cfg:
         # multi-task
         train_dsets, train_w = [], []
         val_dsets = []
         for d in cfg["datasets"]:
-            train_dsets.append(JsonlSeq2Seq(d["train"], tokenizer=tok, max_len=cfg["max_len"]))
+            train_dsets.append(
+                JsonlSeq2Seq(
+                    d["train"],
+                    tokenizer=tok,
+                    max_len=cfg["max_len"],
+                    enable_entity_spans=enable_entity_spans,
+                )
+            )
             train_w.append(int(d.get("weight", 1)))
-            val_dsets.append(JsonlSeq2Seq(d["val"], tokenizer=tok, max_len=cfg["max_len"]))
+            val_dsets.append(
+                JsonlSeq2Seq(
+                    d["val"],
+                    tokenizer=tok,
+                    max_len=cfg["max_len"],
+                    enable_entity_spans=enable_entity_spans,
+                )
+            )
         train_ds = build_multitask_train(train_dsets, train_w)
         val_ds   = build_concat_val(val_dsets)
     else:
         # single-task (retro-compatibile)
-        train_ds = JsonlSeq2Seq(cfg["train_file"], tokenizer=tok, max_len=cfg["max_len"])
-        val_ds   = JsonlSeq2Seq(cfg["val_file"],   tokenizer=tok, max_len=cfg["max_len"])
+        train_ds = JsonlSeq2Seq(
+            cfg["train_file"],
+            tokenizer=tok,
+            max_len=cfg["max_len"],
+            enable_entity_spans=enable_entity_spans,
+        )
+        val_ds   = JsonlSeq2Seq(
+            cfg["val_file"],
+            tokenizer=tok,
+            max_len=cfg["max_len"],
+            enable_entity_spans=enable_entity_spans,
+        )
 
     from functools import partial
     collate = partial(pad_collate, pad_id=pad_id)
@@ -179,6 +205,8 @@ def cmd_train(args):
             print(f"[wandb] dataset size logging failed: {exc}")
 
     # 5) modello
+    compute_span_metrics = bool(cfg.get("compute_span_metrics", enable_entity_spans))
+
     model = TinySeq2Seq(
         vocab_size=vocab_size,
         d_model=cfg["d_model"],
@@ -193,6 +221,7 @@ def cmd_train(args):
         use_rope=bool(cfg.get("use_rope", False)),
         interleave_ratio=float(cfg.get("interleave_ratio", 0.0)),
         max_position_embeddings=int(cfg.get("max_len", 256)),
+        compute_span_metrics=compute_span_metrics,
     ).to(device)
 
     # 6) training loop
