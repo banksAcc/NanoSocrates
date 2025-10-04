@@ -9,6 +9,9 @@ output_json: "reports/baseline_eval.json"
 decoding:
   max_new_tokens: 160
 
+# abilita la valutazione delle maschere quando il checkpoint le supporta
+enable_entity_spans: true
+
 # path split per task
 tasks:
   text2rdf:

@@ -27,7 +27,12 @@ def evaluate(model, dataloader, device, pad_id):
         inp = batch["input_ids"].to(device, non_blocking=True)
         att = batch["attention_mask"].to(device, non_blocking=True)
         lab = batch["labels"].to(device, non_blocking=True)
-        out = model(inp, att, labels=lab)
+        extra = {}
+        if "mask_positions" in batch:
+            extra["mask_positions"] = batch["mask_positions"].to(device, non_blocking=True)
+        if "mask_lengths" in batch:
+            extra["mask_lengths"] = batch["mask_lengths"].to(device, non_blocking=True)
+        out = model(inp, att, labels=lab, **extra)
         loss = out["loss"].item()
         tot += loss
         n += 1
@@ -136,9 +141,14 @@ def train_loop(
                 inp = batch["input_ids"].to(device, non_blocking=True)
                 att = batch["attention_mask"].to(device, non_blocking=True)
                 lab = batch["labels"].to(device, non_blocking=True)
+                extra = {}
+                if "mask_positions" in batch:
+                    extra["mask_positions"] = batch["mask_positions"].to(device, non_blocking=True)
+                if "mask_lengths" in batch:
+                    extra["mask_lengths"] = batch["mask_lengths"].to(device, non_blocking=True)
 
                 with autocast_ctx:
-                    out = model(inp, att, labels=lab)
+                    out = model(inp, att, labels=lab, **extra)
                     loss = out["loss"]
 
                 loss_to_backward = loss / grad_accum

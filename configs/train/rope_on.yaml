@@ -15,6 +15,10 @@ ff_dim: 1536
 dropout: 0.1
 max_len: 256
 
+# span masking (disabilitato per esperimento RoPE)
+enable_entity_spans: false
+compute_span_metrics: false
+
 # training
 batch_size: 16
 num_epochs: 10

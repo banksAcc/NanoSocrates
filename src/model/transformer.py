@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from .layers import CustomTransformer, SinusoidalPE
+from .losses import sequence_loss_with_span_metrics
 
 
 class TinySeq2Seq(nn.Module):
@@ -25,9 +26,11 @@ class TinySeq2Seq(nn.Module):
         use_rope: bool = False,
         interleave_ratio: float = 0.0,
         max_position_embeddings: int = 2048,
+        compute_span_metrics: bool = False,
     ) -> None:
         super().__init__()
         self.pad_id = pad_id
+        self.compute_span_metrics = bool(compute_span_metrics)
         self.emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.pe = None if use_rope else SinusoidalPE(d_model, max_len=max_position_embeddings)
 
@@ -69,6 +72,9 @@ class TinySeq2Seq(nn.Module):
         attention_mask: torch.Tensor,
         decoder_input_ids: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
+        *,
+        mask_positions: torch.Tensor | None = None,
+        mask_lengths: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | None]:
         device = input_ids.device
         enc = self.emb(input_ids)
@@ -112,19 +118,19 @@ class TinySeq2Seq(nn.Module):
         logits = self.lm_head(out)
 
         loss = None
+        metrics: dict[str, float] | None = None
 
         if labels is not None:
-            if labels.size(1) == logits.size(1):
-                y_tgt = labels
-            elif labels.size(1) == logits.size(1) + 1:
-                y_tgt = labels[:, 1:]
-            else:
-                raise ValueError("labels length must match decoder_input_ids or be longer by one")
-            logits_for_loss = logits[:, -y_tgt.size(1) :, :]
-            loss_fct = nn.CrossEntropyLoss(ignore_index=self.pad_id)
-            loss = loss_fct(
-                logits_for_loss.reshape(-1, logits_for_loss.size(-1)),
-                y_tgt.reshape(-1),
+            loss, metrics = sequence_loss_with_span_metrics(
+                logits,
+                labels,
+                pad_id=self.pad_id,
+                mask_positions=mask_positions,
+                mask_lengths=mask_lengths,
+                compute_metrics=self.compute_span_metrics,
             )
-        return {"logits": logits, "loss": loss}
+        payload = {"logits": logits, "loss": loss}
+        if metrics:
+            payload["metrics"] = metrics
+        return payload
 
