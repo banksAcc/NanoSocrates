@@ -3,6 +3,9 @@ val_file: "data/processed/text2rdf.val.jsonl"
 tokenizer_file: "data/vocab/bpe.json"
 
 # modello
+use_rope: false
+use_mla: false
+interleave_ratio: 0.0
 d_model: 384
 nhead: 6
 enc_layers: 3

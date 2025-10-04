@@ -181,10 +181,18 @@ def cmd_train(args):
     # 5) modello
     model = TinySeq2Seq(
         vocab_size=vocab_size,
-        d_model=cfg["d_model"], nhead=cfg["nhead"],
-        num_encoder_layers=cfg["enc_layers"], num_decoder_layers=cfg["dec_layers"],
-        dim_feedforward=cfg["ff_dim"], dropout=cfg["dropout"],
-        pad_id=pad_id, tie_embeddings=True
+        d_model=cfg["d_model"],
+        nhead=cfg["nhead"],
+        num_encoder_layers=cfg["enc_layers"],
+        num_decoder_layers=cfg["dec_layers"],
+        dim_feedforward=cfg["ff_dim"],
+        dropout=cfg["dropout"],
+        pad_id=pad_id,
+        tie_embeddings=True,
+        use_mla=bool(cfg.get("use_mla", False)),
+        use_rope=bool(cfg.get("use_rope", False)),
+        interleave_ratio=float(cfg.get("interleave_ratio", 0.0)),
+        max_position_embeddings=int(cfg.get("max_len", 256)),
     ).to(device)
 
     # 6) training loop
