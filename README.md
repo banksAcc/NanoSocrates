@@ -20,7 +20,8 @@ nanosocrates/
 │  ├─ data/
 │  │  ├─ dbpedia.yaml            # endpoint, predicati, limiti
 │  │  ├─ wikipedia.yaml          # API, lingua, timeout
-│  │  └─ build.yaml              # split, maxlen, filtri qualità
+│  │  ├─ build.yaml              # split, maxlen, filtri qualità
+│  │  └─ toy.yaml                # percorsi subset toy (20 film)
 │  ├─ tokenizer/
 │  │  └─ bpe_24k.yaml            # vocabolario, special token
 │  ├─ train/
@@ -38,6 +39,7 @@ nanosocrates/
 │  ├─ fetch_dbpedia.py           # scarica triple
 │  ├─ fetch_wikipedia.py         # scarica abstract/intro
 │  ├─ build_dataset.py           # crea i 4 task jsonl
+│  ├─ build_toy_subset.py        # genera i JSONL toy (20 film)
 │  ├─ train_tokenizer.py         # addestra BPE
 │  ├─ sanity_overfit.py          # sanity su 1 batch
 │  └─ eval_all.py                # lancia tutte le metriche
@@ -115,14 +117,28 @@ python -m src.cli predict --checkpoint checkpoints/baseline/best.pt \
     --tokenizer data/vocab/bpe.json --task text2rdf --input "Trama..."
 ```
 
+### 2.4 Toy set (debug rapido)
+
+Per esperimenti lampo è disponibile un sottoinsieme da 20 film:
+
+```bash
+python -m scripts.build_toy_subset                # rigenera data/processed/toy/*.jsonl
+python -m src.cli train --cfg configs/train/baseline.yaml --toy
+python -m scripts.eval_all --cfg configs/eval/baseline.yaml --toy
+```
+
+Il flag `--toy` reindirizza automaticamente i path dei dataset ai JSONL in
+`data/processed/toy/` (vedi `configs/data/toy.yaml`).
+
 ---
 
 ## 3) Configurazione (YAML)
 
 Vedi esempi in `configs/` per:  
-- `data/dbpedia.yaml` — endpoint SPARQL, whitelist predicati, direzione (out|both)  
-- `data/wikipedia.yaml` — lingua, endpoint REST, timeout  
-- `data/build.yaml` — split, maxlen, filtri qualità  
+- `data/dbpedia.yaml` — endpoint SPARQL, whitelist predicati, direzione (out|both)
+- `data/wikipedia.yaml` — lingua, endpoint REST, timeout
+- `data/build.yaml` — split, maxlen, filtri qualità
+- `data/toy.yaml` — percorsi del sottoinsieme 20-film per debug rapido
 - `tokenizer/bpe_24k.yaml` — vocab e token speciali
 - `train/baseline.yaml` — modello, trainer, mixing task
 - `decode/constrained.yaml` — vincoli leggeri per RDF

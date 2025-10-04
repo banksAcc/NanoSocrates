@@ -1,0 +1,54 @@
+{
+  "total_films": 20,
+  "per_split": {
+    "train": [
+      "dbr:200_Meters",
+      "dbr:Alifa",
+      "dbr:Because_of_the_Cats",
+      "dbr:Bhale_Rangadu",
+      "dbr:Calling_the_Ghosts",
+      "dbr:Dean_(film)",
+      "dbr:El_gran_circo_Chamorro",
+      "dbr:Eva_Pflug",
+      "dbr:John_Paul_Jones_(film)",
+      "dbr:Listen,_Darling",
+      "dbr:Silent_film",
+      "dbr:Victor_Lewis-Smith"
+    ],
+    "val": [
+      "dbr:Alice_Nunn",
+      "dbr:Cyril_J._Mockridge",
+      "dbr:Erotic_thriller",
+      "dbr:Sammy_Going_South"
+    ],
+    "test": [
+      "dbr:Aditya_Kapadia",
+      "dbr:Holy_Ghost_People_(2013_film)",
+      "dbr:Lew_Landers",
+      "dbr:Say!_Young_Fellow"
+    ]
+  },
+  "tasks": {
+    "text2rdf": {
+      "train": 12,
+      "val": 4,
+      "test": 4
+    },
+    "rdf2text": {
+      "train": 12,
+      "val": 4,
+      "test": 4
+    },
+    "rdfcomp1": {
+      "train": 12,
+      "val": 4,
+      "test": 4
+    },
+    "rdfcomp2": {
+      "train": 12,
+      "val": 4,
+      "test": 4
+    }
+  },
+  "source_processed_dir": "data/processed"
+}

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 from src.eval.evaluate import evaluate_from_config
-from src.utils.config import add_common_overrides, apply_overrides, load_yaml
+from src.utils.config import add_common_overrides, apply_overrides, apply_toy_paths, load_yaml
 
 
 def _maybe_init_wandb(cfg) -> Tuple[object, object]:
@@ -97,6 +97,9 @@ def main():
     args = ap.parse_args()
 
     cfg = load_yaml(args.cfg)
+    if getattr(args, "toy", False):
+        cfg = apply_toy_paths(cfg)
+        print("[toy] dataset paths → data/processed/toy")
     cfg = apply_overrides(cfg, args.override)
 
     output_path = args.output or cfg.get("output_json")

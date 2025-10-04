@@ -16,7 +16,7 @@ from src.training.dataloaders import (
     pad_collate,
 )
 from src.training.loop import train_loop
-from src.utils.config import add_common_overrides, apply_overrides, load_yaml
+from src.utils.config import add_common_overrides, apply_overrides, apply_toy_paths, load_yaml
 
 def set_seed(seed: int):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
@@ -45,6 +45,9 @@ def _coerce_cfg_types(cfg: dict):
 def cmd_train(args):
     # 1) carica config + override da CLI e sistema i tipi
     cfg = load_yaml(args.cfg)
+    if getattr(args, "toy", False):
+        cfg = apply_toy_paths(cfg)
+        print("[toy] dataset paths → data/processed/toy")
     cfg = apply_overrides(cfg, args.override)   # es: --override lr=3e-4 batch_size=8
     cfg = _coerce_cfg_types(cfg)
 
@@ -271,6 +274,9 @@ def _print_eval_summary(report):
 
 def cmd_evaluate(args):
     cfg = load_yaml(args.cfg)
+    if getattr(args, "toy", False):
+        cfg = apply_toy_paths(cfg)
+        print("[toy] dataset paths → data/processed/toy")
     cfg = apply_overrides(cfg, args.override)
     if args.output:
         cfg["output_json"] = args.output
