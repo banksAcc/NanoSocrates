@@ -1,5 +1,5 @@
 # src/cli.py
-import argparse, os, torch, random, numpy as np
+import argparse, torch, random, numpy as np, math
 from src.utils.config import load_yaml, add_common_overrides, apply_overrides
 from src.tokenizer.tokenizer_io import TokWrapper
 from src.training.dataloaders import JsonlSeq2Seq, pad_collate, build_multitask_train, build_concat_val
@@ -22,9 +22,9 @@ def _coerce_cfg_types(cfg: dict):
             try: _as_float(k)
             except: pass
     # int
-    for k in ("warmup_steps", "max_steps", "batch_size",
+    for k in ("warmup_steps", "batch_size", "num_epochs", "gradient_accumulation_steps",
               "d_model", "nhead", "enc_layers", "dec_layers",
-              "ff_dim", "max_len", "eval_every", "seed", "num_workers"):
+              "ff_dim", "max_len", "seed", "num_workers"):
         if k in cfg:
             try: _as_int(k)
             except: pass
@@ -69,11 +69,46 @@ def cmd_train(args):
 
     from functools import partial
     collate = partial(pad_collate, pad_id=pad_id)
-    train_dl = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True,
-                          collate_fn=collate, num_workers=num_workers, pin_memory=pin)
-    val_dl   = DataLoader(val_ds, batch_size=cfg["batch_size"], shuffle=False,
-                          collate_fn=collate, num_workers=num_workers, pin_memory=pin)
-    
+    batch_size = int(cfg["batch_size"])
+
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate,
+        num_workers=num_workers,
+        pin_memory=pin,
+    )
+    val_dl = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate,
+        num_workers=num_workers,
+        pin_memory=pin,
+    )
+
+    grad_accum = max(1, int(cfg.get("gradient_accumulation_steps", 1)))
+    cfg["gradient_accumulation_steps"] = grad_accum
+
+    train_size = len(train_ds)
+    if train_size <= 0:
+        raise ValueError("Training dataset is empty")
+
+    steps_per_epoch = math.ceil(train_size / max(1, batch_size))
+    optimizer_steps_per_epoch = math.ceil(steps_per_epoch / grad_accum)
+
+    max_train_steps = int(cfg.get("max_steps", 0) or cfg.get("max_train_steps", 0) or 0)
+
+    if not cfg.get("num_epochs"):
+        if max_train_steps <= 0:
+            raise ValueError(
+                "Config must define 'num_epochs' or 'max_steps' for training length"
+            )
+        cfg["num_epochs"] = max(1, math.ceil(max_train_steps / optimizer_steps_per_epoch))
+    else:
+        cfg["num_epochs"] = int(cfg["num_epochs"])
+
     # 5) modello
     model = TinySeq2Seq(
         vocab_size=vocab_size,
@@ -84,11 +119,23 @@ def cmd_train(args):
     ).to(device)
 
     # 6) training loop
-    best = train_loop(model, train_dl, val_dl, cfg, device, pad_id)
-    print(f"[train] best val loss: {best:.3f}")
+    stats = train_loop(
+        model,
+        train_dl,
+        val_dl,
+        cfg,
+        device,
+        pad_id,
+        steps_per_epoch,
+        max_train_steps=max_train_steps,
+    )
+    print(
+        f"[train] best val loss: {stats['best_val']:.3f} (epoch {stats['best_epoch']}, step {stats['best_step']})"
+        f" after {stats['global_step']} steps"
+    )
 
 def cmd_overfit(args):
-    # usa la stessa pipeline ma con max_steps/batch_size ridotti via --override
+    # usa la stessa pipeline ma con num_epochs/batch_size ridotti via --override
     cmd_train(args)
 
 def main():
