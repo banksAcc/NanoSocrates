@@ -63,7 +63,7 @@ def cmd_train(args):
     vocab_size = tok.vocab_size()
 
     # 4) datasets: single-task (train_file) oppure multi-task (datasets: [...])
-    from torch.utils.data import DataLoader
+    from torch.utils.data import DataLoader, SubsetRandomSampler
     num_workers = int(cfg.get("num_workers", 4))
     pin = (device == "cuda")
 
@@ -112,14 +112,34 @@ def cmd_train(args):
     collate = partial(pad_collate, pad_id=pad_id)
     batch_size = int(cfg["batch_size"])
 
-    train_dl = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate,
-        num_workers=num_workers,
-        pin_memory=pin,
-    )
+    train_size = len(train_ds)
+
+    overfit_one_batch = bool(cfg.get("overfit_one_batch", False))
+    if overfit_one_batch:
+        train_indices = list(range(train_size))
+        if train_indices:
+            random.shuffle(train_indices)
+            train_indices = train_indices[: batch_size or 1]
+        sampler = SubsetRandomSampler(train_indices)
+        train_loader_kwargs = {
+            "dataset": train_ds,
+            "batch_size": batch_size,
+            "collate_fn": collate,
+            "num_workers": num_workers,
+            "pin_memory": pin,
+            "sampler": sampler,
+        }
+    else:
+        train_loader_kwargs = {
+            "dataset": train_ds,
+            "batch_size": batch_size,
+            "shuffle": True,
+            "collate_fn": collate,
+            "num_workers": num_workers,
+            "pin_memory": pin,
+        }
+
+    train_dl = DataLoader(**train_loader_kwargs)
     val_dl = DataLoader(
         val_ds,
         batch_size=batch_size,
@@ -132,12 +152,14 @@ def cmd_train(args):
     grad_accum = max(1, int(cfg.get("gradient_accumulation_steps", 1)))
     cfg["gradient_accumulation_steps"] = grad_accum
 
-    train_size = len(train_ds)
     if train_size <= 0:
         raise ValueError("Training dataset is empty")
 
     val_size = len(val_ds)
-    steps_per_epoch = math.ceil(train_size / max(1, batch_size))
+    if overfit_one_batch:
+        steps_per_epoch = 1
+    else:
+        steps_per_epoch = math.ceil(train_size / max(1, batch_size))
     optimizer_steps_per_epoch = math.ceil(steps_per_epoch / grad_accum)
 
     max_train_steps = int(cfg.get("max_steps", 0) or cfg.get("max_train_steps", 0) or 0)
@@ -347,7 +369,13 @@ def cmd_predict(args):
 
 
 def cmd_overfit(args):
-    # usa la stessa pipeline ma con num_epochs/batch_size ridotti via --override
+    overrides = list(getattr(args, "override", []))
+    overrides.extend([
+        "num_epochs=1",
+        "max_steps=1",
+        "overfit_one_batch=true",
+    ])
+    args.override = overrides
     cmd_train(args)
 
 def main():

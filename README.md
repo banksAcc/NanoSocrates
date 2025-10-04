@@ -115,7 +115,20 @@ python -m scripts.eval_all --cfg configs/eval/baseline.yaml
 python -m src.cli evaluate --cfg configs/eval/baseline.yaml
 python -m src.cli predict --checkpoint checkpoints/baseline/best.pt \
     --tokenizer data/vocab/bpe.json --task text2rdf --input "Trama..."
+python -m scripts.sanity_overfit --cfg configs/train/baseline.yaml
 ```
+
+### 2.5 Sanity check: overfit di un singolo batch
+
+Il comando `src.cli overfit` (e lo script di comodo `python -m scripts.sanity_overfit`) forzano automaticamente:
+
+- `num_epochs = 1`
+- `max_steps = 1` (un solo aggiornamento dell'ottimizzatore)
+- `overfit_one_batch = true` (campiona un unico batch con `SubsetRandomSampler`)
+
+Questo consente di verificare rapidamente che il modello sia in grado di sovradattarsi a pochi esempi e che l'intera pipeline
+di training (tokenizer, dataloader, loop, logging) sia correttamente configurata. Sono comunque accettati override addizionali
+da CLI, ad esempio per puntare al sottoinsieme toy: `python -m scripts.sanity_overfit --cfg configs/train/baseline.yaml --toy`.
 
 ### 2.4 Toy set (debug rapido)
 

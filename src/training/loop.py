@@ -114,6 +114,7 @@ def train_loop(
     best_step = 0
 
     stop_training = False
+    overfit_one_batch = bool(cfg.get("overfit_one_batch", False))
 
     wandb_cfg = cfg.get("wandb") or {}
     watch_model = bool(wandb_cfg.get("watch", False))
@@ -209,6 +210,9 @@ def train_loop(
                         wandb_logger(log_payload, step=global_step)
                     except Exception as exc:
                         tqdm.write(f"[wandb] log() failed: {exc}")
+
+                if overfit_one_batch:
+                    stop_training = True
 
                 if batch_idx >= steps_per_epoch or stop_training:
                     break
