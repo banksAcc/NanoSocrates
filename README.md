@@ -106,6 +106,15 @@ make eval        # valutazione completa per task
 make plots       # grafici di training (opzionale)
 ```
 
+Oppure usa direttamente gli entrypoint Python:
+
+```bash
+python -m scripts.eval_all --cfg configs/eval/baseline.yaml
+python -m src.cli evaluate --cfg configs/eval/baseline.yaml
+python -m src.cli predict --checkpoint checkpoints/baseline/best.pt \
+    --tokenizer data/vocab/bpe.json --task text2rdf --input "Trama..."
+```
+
 ---
 
 ## 3) Configurazione (YAML)
@@ -155,9 +164,47 @@ Parser → triple (S,P,O), normalizzazione prefissi, dedup. **Validity ≥ 95%**
 ---
 
 ## 8) Valutazione (Step 8)
-- **RDF2Text**: ROUGE-L, BLEU, METEOR  
-- **Text2RDF/Comp-2**: Precision/Recall/**F1** su triple  
+- **RDF2Text**: ROUGE-L, BLEU, METEOR
+- **Text2RDF/Comp-2**: Precision/Recall/**F1** su triple
 - **Comp-1**: **Accuracy** sullo span
+
+Le metriche sono calcolate tramite `src/eval/metrics.py` e orchestrate da
+`src/eval/evaluate.py`, che carica i checkpoint, costruisce i `DataLoader`
+per gli split `val`/`test` e aggrega i risultati per task.
+
+### 8.1 Configurazione & script
+
+Il file `configs/eval/baseline.yaml` mostra un esempio completo di configurazione
+con percorsi `val`/`test` per ciascun task, parametri di decoding e destinazione
+del report JSON. Per eseguire una valutazione completa:
+
+```bash
+python -m scripts.eval_all --cfg configs/eval/baseline.yaml
+```
+
+Lo script genera un report strutturato (stampato a terminale e salvato su disco)
+ed effettua l'eventuale logging su Weights & Biases se abilitato nel config.
+Lo stesso comportamento è disponibile dal CLI unificato:
+
+```bash
+python -m src.cli evaluate --cfg configs/eval/baseline.yaml --output reports/eval.json
+```
+
+### 8.2 Inference manuale
+
+Per testare rapidamente il modello su un input specifico puoi usare il
+subcomando `predict` oppure lo script di esempio `scripts/predict_example.py`:
+
+```bash
+python -m src.cli predict --checkpoint checkpoints/baseline/best.pt \
+    --tokenizer data/vocab/bpe.json --task text2rdf --input "Plot ..."
+
+python scripts/predict_example.py --checkpoint checkpoints/baseline/best.pt \
+    --tokenizer data/vocab/bpe.json --task rdf2text --input "<SOT> ... <RDF2Text>"
+```
+
+Il flag `--task` aggiunge automaticamente il marker speciale previsto dal
+dataset se non già presente nell'input.
 
 ---
 
