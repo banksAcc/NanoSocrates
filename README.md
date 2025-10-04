@@ -152,8 +152,24 @@ Addestra **BPE 24k** su (testo + RDF linearizzato) con i token speciali. Artefat
 ---
 
 ## 6) Modello & Training (Step 5–6)
-Micro Transformer (4e+4d, d=512, 8h, FFN 2048, dropout 0.1).  
+Micro Transformer (4e+4d, d=512, 8h, FFN 2048, dropout 0.1).
 Training multi-task mixing **3:3:2:2** (T2RDF:R2Text:Comp1:Comp2), AdamW, warmup+cosine, grad-accum. **Sanity**: toy + overfit 1 batch.
+
+### 6.1 Varianti posizionali/attenzione
+I config in `configs/train/*.yaml` espongono tre interruttori per sperimentare
+varianti architetturali del `TinySeq2Seq`:
+
+- `use_rope`: abilita le Rotary Positional Embeddings applicate alle
+  proiezioni query/key al posto dell'iniezione sinusoidale. Il parametro
+  `max_len` del config viene riutilizzato come `max_position_embeddings`.
+- `use_mla`: sostituisce l'attenzione classica con un blocco
+  **Multi-Linear Attention** leggero; quando combinato con `interleave_ratio`
+  consente di fondere MLA e attenzione standard nella stessa testa.
+- `interleave_ratio`: coefficiente (0.0–1.0) che controlla quanto del risultato
+  dell'attenzione derivi dal ramo MLA (1.0 = solo MLA, 0.5 = mix paritetico).
+
+Gli esempi pronti (`baseline.yaml`, `rope_on.yaml`, `mix_3322.yaml`) mostrano
+come attivare/ disattivare i flag per le ablation.
 
 ---
 
@@ -209,10 +225,17 @@ dataset se non già presente nell'input.
 ---
 
 ## 9) Ablation (Step 9) — breve e mirata
-- **Positional**: sinusoidale vs **RoPE**  
-- **Mixing**: 3:3:2:2 vs 2:2:3:3  
-- **Decoding**: libero vs **vincoli leggeri**  
+- **Positional**: sinusoidale vs **RoPE**
+- **Attention**: standard vs **MLA** (mixabile via `interleave_ratio`)
+- **Mixing**: 3:3:2:2 vs 2:2:3:3
+- **Decoding**: libero vs **vincoli leggeri**
 Metriche: ROUGE-L, F1 triple, Accuracy Comp-1, validity rate, costo/epoch.
+
+Esegui i test rapidi sulle varianti con:
+
+```bash
+pytest tests/test_transformer_variants.py
+```
 
 ---
 

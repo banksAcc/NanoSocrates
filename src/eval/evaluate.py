@@ -61,6 +61,10 @@ def _load_model_from_checkpoint(
         dropout=float(saved_cfg["dropout"]),
         pad_id=tokenizer.pad_id,
         tie_embeddings=True,
+        use_mla=bool(saved_cfg.get("use_mla", False)),
+        use_rope=bool(saved_cfg.get("use_rope", False)),
+        interleave_ratio=float(saved_cfg.get("interleave_ratio", 0.0)),
+        max_position_embeddings=int(saved_cfg.get("max_len", 256)),
     ).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
