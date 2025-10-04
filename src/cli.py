@@ -17,6 +17,7 @@ from src.training.dataloaders import (
 )
 from src.training.loop import train_loop
 from src.utils.config import add_common_overrides, apply_overrides, apply_toy_paths, load_yaml
+from src.utils.wandb_utils import flatten_eval_metrics, maybe_init_wandb
 
 def set_seed(seed: int):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
@@ -315,16 +316,32 @@ def cmd_evaluate(args):
     cfg = apply_overrides(cfg, args.override)
     if args.output:
         cfg["output_json"] = args.output
-    report = evaluate_from_config(cfg)
+    wandb_run, wandb_module = maybe_init_wandb(cfg)
+    try:
+        report = evaluate_from_config(cfg)
 
-    if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False)
-        print(f"[evaluate] report salvato in {out_path.resolve()}")
+        if args.output:
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2, ensure_ascii=False)
+            print(f"[evaluate] report salvato in {out_path.resolve()}")
 
-    _print_eval_summary(report)
+        _print_eval_summary(report)
+
+        if wandb_run is not None and wandb_module is not None:
+            flat_metrics = flatten_eval_metrics(report)
+            if flat_metrics:
+                try:
+                    wandb_module.log(flat_metrics)
+                except Exception as exc:  # pragma: no cover - best effort logging
+                    print(f"[wandb] log fallito: {exc}")
+    finally:
+        if wandb_run is not None and wandb_module is not None:
+            try:
+                wandb_module.finish()
+            except Exception as exc:  # pragma: no cover
+                print(f"[wandb] finish fallita: {exc}")
 
 
 TASK_MARKERS = {
