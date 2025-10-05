@@ -23,12 +23,16 @@ datasets:
 use_rope: false
 use_mla: false
 interleave_ratio: 0.0
+architecture: "vanilla"
 d_model: 384
 nhead: 6
 enc_layers: 3
 dec_layers: 3
 ff_dim: 1536
 dropout: 0.1
+relative_attention_num_buckets: 32
+relative_attention_max_distance: 128
+layer_norm_epsilon: 1.0e-6
 max_len: 512
 
 # span masking per RDF Completion 1
