@@ -81,3 +81,38 @@ def test_interleave_ratio_clamped():
     logits = out["logits"]
     assert logits.shape[1] == labels.size(1) - 1
     assert torch.all(torch.isfinite(logits))
+
+
+@torch.no_grad()
+def test_tinyseq2seq_t5_forward():
+    torch.manual_seed(2)
+    vocab_size = 48
+    model = TinySeq2Seq(
+        vocab_size=vocab_size,
+        d_model=64,
+        nhead=4,
+        num_encoder_layers=2,
+        num_decoder_layers=2,
+        dim_feedforward=128,
+        dropout=0.1,
+        pad_id=0,
+        architecture="t5",
+        relative_attention_num_buckets=16,
+        relative_attention_max_distance=64,
+    )
+
+    input_ids = torch.randint(1, vocab_size, (2, 6))
+    input_ids[0, -1] = 0
+    attention_mask = torch.ones_like(input_ids)
+    attention_mask[0, -1] = 0
+
+    labels = torch.randint(1, vocab_size, (2, 7))
+    labels[:, -1] = 0
+
+    out = model(input_ids, attention_mask, labels=labels)
+    logits = out["logits"]
+    loss = out["loss"]
+
+    assert logits.shape == (input_ids.size(0), labels.size(1) - 1, vocab_size)
+    assert torch.all(torch.isfinite(logits))
+    assert loss is not None and torch.isfinite(loss)

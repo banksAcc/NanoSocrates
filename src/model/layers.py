@@ -448,3 +448,383 @@ class CustomTransformer(nn.Module):
             )
         return self.decoder_norm(output)
 
+
+class RelativePositionBias(nn.Module):
+    """Implements T5-style relative position bias with bucketing."""
+
+    def __init__(
+        self,
+        num_heads: int,
+        num_buckets: int = 32,
+        max_distance: int = 128,
+        *,
+        bidirectional: bool = True,
+    ) -> None:
+        super().__init__()
+        if num_buckets <= 0:
+            raise ValueError("num_buckets must be positive")
+        if num_heads <= 0:
+            raise ValueError("num_heads must be positive")
+        self.num_heads = int(num_heads)
+        self.num_buckets = int(num_buckets)
+        self.max_distance = int(max_distance)
+        self.bidirectional = bool(bidirectional)
+        self.relative_attention_bias = nn.Embedding(self.num_buckets, self.num_heads)
+
+    def _relative_position_bucket(self, relative_position: torch.Tensor) -> torch.Tensor:
+        num_buckets = self.num_buckets
+        max_distance = max(1, self.max_distance)
+        relative_buckets = torch.zeros_like(relative_position, dtype=torch.long)
+
+        if self.bidirectional:
+            num_buckets //= 2
+            relative_buckets += (relative_position > 0).to(torch.long) * num_buckets
+            relative_position = relative_position.abs()
+        else:
+            relative_position = -torch.min(relative_position, torch.zeros_like(relative_position))
+
+        max_exact = max(1, num_buckets // 2)
+        is_small = relative_position < max_exact
+        log_ratio = math.log(max_distance / max_exact) if max_distance > max_exact else 1.0
+        large_pos = max_exact + (
+            torch.log(relative_position.float() / max_exact + 1e-6) / log_ratio
+        ) * (num_buckets - max_exact)
+        large_pos = large_pos.long()
+        large_pos = torch.min(large_pos, torch.full_like(large_pos, num_buckets - 1))
+        relative_buckets += torch.where(is_small, relative_position, large_pos)
+        return relative_buckets
+
+    def forward(
+        self,
+        query_length: int,
+        key_length: int,
+        *,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        context_position = torch.arange(query_length, dtype=torch.long, device=device)[:, None]
+        memory_position = torch.arange(key_length, dtype=torch.long, device=device)[None, :]
+        relative_position = memory_position - context_position
+        bucket = self._relative_position_bucket(relative_position)
+        values = self.relative_attention_bias(bucket)
+        values = values.permute(2, 0, 1).unsqueeze(0)
+        return values.to(dtype)
+
+
+class T5Attention(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        dropout: float,
+        *,
+        relative_bias: Optional[RelativePositionBias] = None,
+    ) -> None:
+        super().__init__()
+        if d_model % num_heads != 0:
+            raise ValueError("d_model must be divisible by num_heads")
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+        self.relative_bias = relative_bias
+        self.q = nn.Linear(d_model, d_model, bias=False)
+        self.k = nn.Linear(d_model, d_model, bias=False)
+        self.v = nn.Linear(d_model, d_model, bias=False)
+        self.out = nn.Linear(d_model, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def _reshape(self, tensor: torch.Tensor) -> torch.Tensor:
+        batch, seq_len, dim = tensor.size()
+        tensor = tensor.view(batch, seq_len, self.num_heads, self.head_dim)
+        return tensor.transpose(1, 2)
+
+    def _merge(self, tensor: torch.Tensor) -> torch.Tensor:
+        batch, heads, seq_len, dim = tensor.size()
+        return tensor.transpose(1, 2).reshape(batch, seq_len, heads * dim)
+
+    def _prepare_attention_mask(self, mask: Optional[torch.Tensor], target: torch.Tensor) -> Optional[torch.Tensor]:
+        if mask is None:
+            return None
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(0).unsqueeze(0)
+        elif mask.dim() == 3:
+            mask = mask.unsqueeze(1)
+        elif mask.dim() != 4:
+            raise ValueError("Unsupported attention mask dimensions")
+        if mask.size(-1) != target.size(-1):
+            mask = mask.expand(-1, -1, -1, target.size(-1))
+        return mask
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        *,
+        attention_mask: Optional[torch.Tensor] = None,
+        key_value_states: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        position_bias: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        query = self._reshape(self.q(hidden_states))
+        if key_value_states is None:
+            key_states = hidden_states
+            value_states = hidden_states
+        else:
+            key_states = key_value_states
+            value_states = key_value_states
+        key = self._reshape(self.k(key_states))
+        value = self._reshape(self.v(value_states))
+
+        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.head_dim)
+
+        if self.relative_bias is not None and position_bias is None:
+            position_bias = self.relative_bias(
+                query_length=query.size(-2),
+                key_length=key.size(-2),
+                device=query.device,
+                dtype=query.dtype,
+            )
+        if position_bias is not None:
+            scores = scores + position_bias
+
+        if key_padding_mask is not None:
+            mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
+            scores = scores.masked_fill(mask, torch.finfo(scores.dtype).min)
+
+        if attention_mask is not None:
+            attn_mask = self._prepare_attention_mask(attention_mask, scores)
+            if attn_mask.dtype == torch.bool:
+                scores = scores.masked_fill(attn_mask, torch.finfo(scores.dtype).min)
+            else:
+                scores = scores + attn_mask.to(scores.dtype)
+
+        attn_weights = torch.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+        attn_output = torch.matmul(attn_weights, value)
+        attn_output = self._merge(attn_output)
+        return self.out(attn_output)
+
+
+class T5FeedForward(nn.Module):
+    def __init__(self, d_model: int, dim_feedforward: int, dropout: float) -> None:
+        super().__init__()
+        self.wi = nn.Linear(d_model, dim_feedforward * 2, bias=False)
+        self.wo = nn.Linear(dim_feedforward, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        wi = self.wi(x)
+        gate, value = wi.chunk(2, dim=-1)
+        gated = F.gelu(gate) * value
+        return self.dropout(self.wo(gated))
+
+
+class T5EncoderLayer(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float,
+        *,
+        layer_norm_epsilon: float,
+        relative_bias: Optional[RelativePositionBias],
+    ) -> None:
+        super().__init__()
+        self.self_attn = T5Attention(
+            d_model,
+            nhead,
+            dropout,
+            relative_bias=relative_bias,
+        )
+        self.layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.ff_layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.feed_forward = T5FeedForward(d_model, dim_feedforward, dropout)
+        self.dropout = nn.Dropout(dropout)
+        self.relative_bias = relative_bias
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        *,
+        attention_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        normed = self.layer_norm(hidden_states)
+        position_bias = None
+        if self.relative_bias is not None:
+            position_bias = self.relative_bias(
+                query_length=normed.size(1),
+                key_length=normed.size(1),
+                device=normed.device,
+                dtype=normed.dtype,
+            )
+        attn_out = self.self_attn(
+            normed,
+            attention_mask=attention_mask,
+            key_padding_mask=key_padding_mask,
+            position_bias=position_bias,
+        )
+        hidden_states = hidden_states + self.dropout(attn_out)
+        hidden_states = hidden_states + self.dropout(self.feed_forward(self.ff_layer_norm(hidden_states)))
+        return hidden_states
+
+
+class T5DecoderLayer(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float,
+        *,
+        layer_norm_epsilon: float,
+        self_relative_bias: Optional[RelativePositionBias],
+    ) -> None:
+        super().__init__()
+        self.self_attn = T5Attention(
+            d_model,
+            nhead,
+            dropout,
+            relative_bias=self_relative_bias,
+        )
+        self.cross_attn = T5Attention(d_model, nhead, dropout, relative_bias=None)
+        self.self_attn_layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.cross_attn_layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.ff_layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.feed_forward = T5FeedForward(d_model, dim_feedforward, dropout)
+        self.dropout = nn.Dropout(dropout)
+        self.relative_bias = self_relative_bias
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        memory: torch.Tensor,
+        *,
+        self_attn_mask: Optional[torch.Tensor] = None,
+        self_key_padding_mask: Optional[torch.Tensor] = None,
+        cross_key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        normed = self.self_attn_layer_norm(hidden_states)
+        position_bias = None
+        if self.relative_bias is not None:
+            position_bias = self.relative_bias(
+                query_length=normed.size(1),
+                key_length=normed.size(1),
+                device=normed.device,
+                dtype=normed.dtype,
+            )
+        self_attn_out = self.self_attn(
+            normed,
+            attention_mask=self_attn_mask,
+            key_padding_mask=self_key_padding_mask,
+            position_bias=position_bias,
+        )
+        hidden_states = hidden_states + self.dropout(self_attn_out)
+
+        normed_cross = self.cross_attn_layer_norm(hidden_states)
+        cross_out = self.cross_attn(
+            normed_cross,
+            key_value_states=memory,
+            key_padding_mask=cross_key_padding_mask,
+        )
+        hidden_states = hidden_states + self.dropout(cross_out)
+
+        hidden_states = hidden_states + self.dropout(self.feed_forward(self.ff_layer_norm(hidden_states)))
+        return hidden_states
+
+
+class T5Transformer(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        num_encoder_layers: int,
+        num_decoder_layers: int,
+        dim_feedforward: int,
+        dropout: float,
+        *,
+        relative_attention_num_buckets: int,
+        relative_attention_max_distance: int,
+        layer_norm_epsilon: float = 1e-6,
+    ) -> None:
+        super().__init__()
+        encoder_bias = RelativePositionBias(
+            nhead,
+            num_buckets=relative_attention_num_buckets,
+            max_distance=relative_attention_max_distance,
+            bidirectional=True,
+        )
+        decoder_bias = RelativePositionBias(
+            nhead,
+            num_buckets=relative_attention_num_buckets,
+            max_distance=relative_attention_max_distance,
+            bidirectional=False,
+        )
+        self.encoder_layers = nn.ModuleList(
+            [
+                T5EncoderLayer(
+                    d_model,
+                    nhead,
+                    dim_feedforward,
+                    dropout,
+                    layer_norm_epsilon=layer_norm_epsilon,
+                    relative_bias=encoder_bias,
+                )
+                for _ in range(num_encoder_layers)
+            ]
+        )
+        self.decoder_layers = nn.ModuleList(
+            [
+                T5DecoderLayer(
+                    d_model,
+                    nhead,
+                    dim_feedforward,
+                    dropout,
+                    layer_norm_epsilon=layer_norm_epsilon,
+                    self_relative_bias=decoder_bias,
+                )
+                for _ in range(num_decoder_layers)
+            ]
+        )
+        self.encoder_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.decoder_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.dropout = nn.Dropout(dropout)
+
+    def encode(
+        self,
+        src: torch.Tensor,
+        *,
+        attention_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        output = src
+        for layer in self.encoder_layers:
+            output = layer(
+                output,
+                attention_mask=attention_mask,
+                key_padding_mask=key_padding_mask,
+            )
+        output = self.encoder_norm(output)
+        return self.dropout(output)
+
+    def decode(
+        self,
+        tgt: torch.Tensor,
+        memory: torch.Tensor,
+        *,
+        self_attn_mask: Optional[torch.Tensor] = None,
+        self_key_padding_mask: Optional[torch.Tensor] = None,
+        cross_key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        output = tgt
+        for layer in self.decoder_layers:
+            output = layer(
+                output,
+                memory,
+                self_attn_mask=self_attn_mask,
+                self_key_padding_mask=self_key_padding_mask,
+                cross_key_padding_mask=cross_key_padding_mask,
+            )
+        output = self.decoder_norm(output)
+        return self.dropout(output)
+
