@@ -1,5 +1,6 @@
 # src/cli.py
 import argparse, json, math, random
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -78,7 +79,7 @@ def cmd_train(args):
     vocab_size = tok.vocab_size()
 
     # 4) datasets: single-task (train_file) oppure multi-task (datasets: [...])
-    from torch.utils.data import DataLoader, SubsetRandomSampler
+    from torch.utils.data import DataLoader, Subset, SubsetRandomSampler
     num_workers = int(cfg.get("num_workers", 4))
     pin = (device == "cuda")
 
@@ -130,11 +131,16 @@ def cmd_train(args):
     train_size = len(train_ds)
 
     overfit_one_batch = bool(cfg.get("overfit_one_batch", False))
+    train_eval_dl = None
     if overfit_one_batch:
         train_indices = list(range(train_size))
         if train_indices:
             random.shuffle(train_indices)
             train_indices = train_indices[: batch_size or 1]
+        selected = len(train_indices)
+        print(
+            f"[overfit] using {selected} samples (batch_size={batch_size}) out of {train_size}"
+        )
         sampler = SubsetRandomSampler(train_indices)
         train_loader_kwargs = {
             "dataset": train_ds,
@@ -144,6 +150,17 @@ def cmd_train(args):
             "pin_memory": pin,
             "sampler": sampler,
         }
+
+        if selected:
+            train_eval_subset = Subset(train_ds, train_indices)
+            train_eval_dl = DataLoader(
+                train_eval_subset,
+                batch_size=batch_size,
+                shuffle=False,
+                collate_fn=collate,
+                num_workers=0,
+                pin_memory=pin,
+            )
     else:
         train_loader_kwargs = {
             "dataset": train_ds,
@@ -200,11 +217,26 @@ def cmd_train(args):
         except ImportError as exc:
             print(f"[wandb] library not available ({exc}); skipping logging.")
         else:
+            resolved_run_name = wandb_cfg.get("run_name")
+            if not resolved_run_name:
+                cfg_name = "run"
+                if getattr(args, "cfg", None):
+                    cfg_name = Path(args.cfg).stem or "run"
+                run_tag = "overfit" if overfit_one_batch else "train"
+                seed = cfg.get("seed")
+                timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+                parts = [cfg_name, run_tag]
+                if seed is not None:
+                    parts.append(f"s{seed}")
+                parts.append(timestamp)
+                resolved_run_name = "-".join(str(p) for p in parts if p)
+            cfg.setdefault("wandb", {})["resolved_run_name"] = resolved_run_name
+
             def _build_init_kwargs(mode_value):
                 init_kwargs = {
                     "project": wandb_cfg.get("project"),
                     "entity": wandb_cfg.get("entity"),
-                    "name": wandb_cfg.get("run_name"),
+                    "name": resolved_run_name,
                     "tags": wandb_cfg.get("tags"),
                     "mode": mode_value,
                     "config": cfg,
@@ -278,6 +310,7 @@ def cmd_train(args):
         pad_id,
         steps_per_epoch,
         max_train_steps=max_train_steps,
+        train_eval_dl=train_eval_dl,
         wandb_run=wandb_run,
         wandb_module=wandb_module,
     )

@@ -63,6 +63,7 @@ def train_loop(
     steps_per_epoch,
     *,
     max_train_steps=0,
+    train_eval_dl=None,
     wandb_run=None,
     wandb_module=None,
 ):
@@ -270,6 +271,18 @@ def train_loop(
 
             epoch_bar.close()
 
+            train_subset_loss = None
+            train_subset_metrics = {}
+            if train_eval_dl is not None:
+                train_eval = evaluate(model, train_eval_dl, device, pad_id)
+                if isinstance(train_eval, dict):
+                    train_subset_loss = float(train_eval.get("loss", 0.0))
+                    train_subset_metrics = {
+                        name: value for name, value in train_eval.items() if name != "loss"
+                    }
+                else:
+                    train_subset_loss = float(train_eval)
+
             val = evaluate(model, val_dl, device, pad_id)
             if isinstance(val, dict):
                 val_loss = float(val.get("loss", 0.0))
@@ -312,6 +325,11 @@ def train_loop(
                         patience > 0 and epochs_since_improvement >= patience
                     ),
                 }
+                if train_subset_loss is not None:
+                    log_payload["train_subset/loss"] = train_subset_loss
+                    for name, value in train_subset_metrics.items():
+                        if isinstance(value, (int, float)):
+                            log_payload[f"train_subset/{name}"] = float(value)
                 for name, value in extra_val_metrics.items():
                     if isinstance(value, (int, float)):
                         log_payload[f"val/{name}"] = float(value)
@@ -321,10 +339,13 @@ def train_loop(
                     tqdm.write(f"[wandb] log() failed: {exc}")
 
             model.train()
-            status = (
-                f"[epoch {epoch + 1}] val loss: {val_loss:.3f} | best: {best_val:.3f}"
-                f" @ step {best_step}"
+            status_parts = []
+            if train_subset_loss is not None:
+                status_parts.append(f"train_subset loss: {train_subset_loss:.3f}")
+            status_parts.append(
+                f"val loss: {val_loss:.3f} | best: {best_val:.3f} @ step {best_step}"
             )
+            status = f"[epoch {epoch + 1}] " + " | ".join(status_parts)
             status += f" | no_improve={epochs_since_improvement}"
             if patience > 0:
                 status += f"/{patience}"

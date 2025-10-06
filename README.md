@@ -140,6 +140,9 @@ pip install -r requirements.txt
    Il comando abilita `overfit_one_batch=true`, disattiva l'early stopping e,
    per impostazione predefinita, esegue 200 aggiornamenti consecutivi sullo
    stesso batch.
+   - Il numero di esempi nel batch coincide con `batch_size` del config (16 nel
+     preset `configs/train/mix_3322.yaml`). Se vuoi restringerlo, passa
+     `--override batch_size=4` o modifica il valore nel YAML.
    - Usa `--steps N` per cambiare il numero di ottimizzazioni (es. `--steps 400`).
    - In alternativa `--epochs M` forza il numero di epoche (una per aggiornamento
      quando si overfitta un singolo batch).
@@ -159,8 +162,11 @@ pip install -r requirements.txt
        --override wandb.mode=online wandb.project=nanosocrates-demo wandb.run_name=debug
    ```
    I campi supportati sono `mode` (`online`, `offline`, `disabled`), `project`,
-   `entity`, `run_name`, `tags` (lista) e `watch` (bool). Se la connessione fallisce
-   viene eseguito automaticamente il fallback in modalità offline.
+   `entity`, `run_name`, `tags` (lista) e `watch` (bool). Se non specifichi
+   `run_name`, il CLI genera automaticamente un nome leggibile basato sul file
+   di config, sul tipo di esecuzione (`train`/`overfit`) e sul timestamp; in caso
+   contrario apparirebbero i nomi casuali di default di W&B. Se la connessione
+   fallisce viene eseguito automaticamente il fallback in modalità offline.
 2. Per loggare anche la valutazione usa lo stesso approccio:
    ```bash
    python -m scripts.eval_all \
