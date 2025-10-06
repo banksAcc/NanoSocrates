@@ -66,6 +66,10 @@ def _load_model_from_checkpoint(
         interleave_ratio=float(saved_cfg.get("interleave_ratio", 0.0)),
         max_position_embeddings=int(saved_cfg.get("max_len", 256)),
         compute_span_metrics=bool(saved_cfg.get("compute_span_metrics", False)),
+        architecture=str(saved_cfg.get("architecture", "vanilla")),
+        relative_attention_num_buckets=int(saved_cfg.get("relative_attention_num_buckets", 32)),
+        relative_attention_max_distance=int(saved_cfg.get("relative_attention_max_distance", 128)),
+        layer_norm_epsilon=float(saved_cfg.get("layer_norm_epsilon", 1e-6)),
     ).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()

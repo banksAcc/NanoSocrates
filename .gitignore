@@ -214,3 +214,4 @@ __marimo__/
 !src/data/
 
 checkpoints/
+wandb

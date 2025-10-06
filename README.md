@@ -191,6 +191,19 @@ Vedi esempi in `configs/` per:
 - `decode/constrained.yaml` — vincoli leggeri per RDF
 - blocco `wandb:` — parametri di logging (project, entity, run_name, mode, tags, watch)
 
+### Nuove opzioni modello
+- `architecture`: scegli `"vanilla"` per mantenere l'encoder–decoder classico
+  (nn.Transformer/varianti MLA+RoPE) oppure `"t5"` per attivare blocchi T5 con LayerNorm
+  pre-attention, feed-forward GeGLU e bias posizionali relativi a bucket. La variante T5
+  applica automaticamente lo scaling `√d_model` sulle embedding e riutilizza un dropout
+  condiviso per encoder/decoder.
+- `relative_attention_num_buckets` e `relative_attention_max_distance`: controllano la
+  discretizzazione delle distanze per il bias relativo T5. Sono ignorati in modalità
+  "vanilla" ma diventano obbligatori quando `architecture="t5"`.
+- `layer_norm_epsilon`: epsilon numerico per le LayerNorm T5.
+- Quando `architecture="t5"` le opzioni `use_rope`, `use_mla` e `interleave_ratio` sono
+  disabilitate (sollevano errore in config misti).
+
 ---
 
 ## 4) Fase Dati (Step 1–3) — Design logico e contratti I/O
