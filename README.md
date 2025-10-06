@@ -137,8 +137,13 @@ pip install -r requirements.txt
    ```bash
    python -m src.cli overfit --cfg configs/train/baseline.yaml --toy
    ```
-   Il comando imposta `num_epochs=1`, `max_steps=1` e `overfit_one_batch=true`,
-   mantenendo qualsiasi ulteriore `--override` passato da CLI.
+   Il comando abilita `overfit_one_batch=true`, disattiva l'early stopping e,
+   per impostazione predefinita, esegue 200 aggiornamenti consecutivi sullo
+   stesso batch.
+   - Usa `--steps N` per cambiare il numero di ottimizzazioni (es. `--steps 400`).
+   - In alternativa `--epochs M` forza il numero di epoche (una per aggiornamento
+     quando si overfitta un singolo batch).
+   Qualsiasi ulteriore `--override` passato da CLI viene rispettato.
 2. In alternativa esiste lo script dedicato:
    ```bash
    python -m scripts.sanity_overfit --cfg configs/train/baseline.yaml --toy
@@ -440,7 +445,7 @@ PY
 
 | Scenario | Comando |
 |----------|---------|
-| **Smoke test (toy)** | `python -m src.cli overfit --cfg configs/train/baseline.yaml --toy` |
+| **Smoke test (toy)** | `python -m src.cli overfit --cfg configs/train/baseline.yaml --toy [--steps 400]` |
 | **Baseline Text2RDF** | `python -m src.cli train --cfg configs/train/baseline.yaml` |
 | **Multitask 3:3:2:2** | `python -m src.cli train --cfg configs/train/mix_3322.yaml` |
 | **Variant RoPE** | `python -m src.cli train --cfg configs/train/rope_on.yaml` |

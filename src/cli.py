@@ -403,13 +403,41 @@ def cmd_predict(args):
     print(cleaned)
 
 
+def _has_override(overrides, key_prefix: str) -> bool:
+    return any(str(item).startswith(key_prefix) for item in overrides)
+
+
 def cmd_overfit(args):
     overrides = list(getattr(args, "override", []))
-    overrides.extend([
-        "num_epochs=1",
-        "max_steps=1",
-        "overfit_one_batch=true",
-    ])
+
+    raw_epochs = getattr(args, "epochs", None)
+    raw_steps = getattr(args, "steps", None)
+
+    target_epochs = max(1, int(raw_epochs)) if raw_epochs else None
+    target_steps = max(1, int(raw_steps)) if raw_steps else None
+
+    if target_steps is None and target_epochs is None:
+        target_steps = 200
+
+    if target_epochs is None:
+        target_epochs = target_steps
+    if target_steps is None:
+        target_steps = target_epochs
+
+    overrides.append("overfit_one_batch=true")
+
+    if not _has_override(overrides, "num_epochs="):
+        overrides.append(f"num_epochs={target_epochs}")
+
+    if not _has_override(overrides, "max_steps=") and not _has_override(overrides, "max_train_steps="):
+        overrides.append(f"max_steps={target_steps}")
+
+    if not _has_override(overrides, "early_stopping.patience="):
+        overrides.append("early_stopping.patience=0")
+
+    if not _has_override(overrides, "early_stopping.min_delta="):
+        overrides.append("early_stopping.min_delta=0.0")
+
     args.override = overrides
     cmd_train(args)
 
@@ -423,6 +451,17 @@ def main():
 
     ap_over = sub.add_parser("overfit")
     add_common_overrides(ap_over)
+    ap_over.add_argument(
+        "--steps",
+        type=int,
+        default=200,
+        help="Numero di ottimizzazioni consecutive sul singolo batch (default: 200)",
+    )
+    ap_over.add_argument(
+        "--epochs",
+        type=int,
+        help="Override esplicito del numero di epoche da eseguire in overfit",
+    )
     ap_over.set_defaults(func=cmd_overfit)
 
     ap_eval = sub.add_parser("evaluate")

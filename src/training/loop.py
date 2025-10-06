@@ -265,9 +265,6 @@ def train_loop(
                     except Exception as exc:
                         tqdm.write(f"[wandb] log() failed: {exc}")
 
-                if overfit_one_batch:
-                    stop_training = True
-
                 if batch_idx >= steps_per_epoch or stop_training:
                     break
 
