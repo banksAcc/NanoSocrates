@@ -31,14 +31,15 @@ def _coerce_cfg_types(cfg: dict):
         if k in cfg: cfg[k] = int(cfg[k])
 
     # float
-    for k in ("lr", "weight_decay", "dropout"):
-        if k in cfg: 
+    for k in ("lr", "weight_decay", "dropout", "layer_norm_epsilon"):
+        if k in cfg:
             try: _as_float(k)
             except: pass
     # int
     for k in ("warmup_steps", "batch_size", "num_epochs", "gradient_accumulation_steps",
               "d_model", "nhead", "enc_layers", "dec_layers",
-              "ff_dim", "max_len", "seed", "num_workers"):
+              "ff_dim", "max_len", "seed", "num_workers",
+              "relative_attention_num_buckets", "relative_attention_max_distance"):
         if k in cfg:
             try: _as_int(k)
             except: pass
@@ -293,6 +294,10 @@ def cmd_train(args):
         interleave_ratio=float(cfg.get("interleave_ratio", 0.0)),
         max_position_embeddings=int(cfg.get("max_len", 256)),
         compute_span_metrics=compute_span_metrics,
+        architecture=cfg.get("architecture", "vanilla"),
+        relative_attention_num_buckets=int(cfg.get("relative_attention_num_buckets", 32)),
+        relative_attention_max_distance=int(cfg.get("relative_attention_max_distance", 128)),
+        layer_norm_epsilon=float(cfg.get("layer_norm_epsilon", 1e-6)),
     ).to(device)
 
     # 6) training loop

@@ -5,7 +5,9 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .layers import CustomTransformer, SinusoidalPE
+import math
+
+from .layers import CustomTransformer, SinusoidalPE, T5Transformer
 from .losses import sequence_loss_with_span_metrics
 
 
@@ -27,37 +29,64 @@ class TinySeq2Seq(nn.Module):
         interleave_ratio: float = 0.0,
         max_position_embeddings: int = 2048,
         compute_span_metrics: bool = False,
+        architecture: str = "vanilla",
+        relative_attention_num_buckets: int = 32,
+        relative_attention_max_distance: int = 128,
+        layer_norm_epsilon: float = 1e-6,
     ) -> None:
         super().__init__()
         self.pad_id = pad_id
         self.compute_span_metrics = bool(compute_span_metrics)
+        arch = (architecture or "vanilla").lower()
+        if arch not in {"vanilla", "t5"}:
+            raise ValueError("architecture must be 'vanilla' or 't5'")
+        self.architecture = arch
         self.emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
-        self.pe = None if use_rope else SinusoidalPE(d_model, max_len=max_position_embeddings)
+        self.embedding_scale = math.sqrt(d_model) if self.architecture == "t5" else 1.0
+        self.dropout_layer = nn.Dropout(dropout)
 
-        self._use_custom = bool(use_rope or use_mla or interleave_ratio > 0.0)
-        if self._use_custom:
-            self.tfm = CustomTransformer(
+        if self.architecture == "t5":
+            if use_rope or use_mla or abs(float(interleave_ratio)) > 1e-8:
+                raise ValueError("T5 architecture does not support RoPE/MLA/interleave options")
+            self.pe = None
+            self.tfm = T5Transformer(
                 d_model=d_model,
                 nhead=nhead,
                 num_encoder_layers=num_encoder_layers,
                 num_decoder_layers=num_decoder_layers,
                 dim_feedforward=dim_feedforward,
                 dropout=dropout,
-                use_mla=use_mla,
-                interleave_ratio=interleave_ratio,
-                use_rope=use_rope,
-                max_position_embeddings=max_position_embeddings,
+                relative_attention_num_buckets=relative_attention_num_buckets,
+                relative_attention_max_distance=relative_attention_max_distance,
+                layer_norm_epsilon=layer_norm_epsilon,
             )
+            self._use_custom = True
         else:
-            self.tfm = nn.Transformer(
-                d_model=d_model,
-                nhead=nhead,
-                num_encoder_layers=num_encoder_layers,
-                num_decoder_layers=num_decoder_layers,
-                dim_feedforward=dim_feedforward,
-                dropout=dropout,
-                batch_first=True,
-            )
+            self.pe = None if use_rope else SinusoidalPE(d_model, max_len=max_position_embeddings)
+            self._use_custom = bool(use_rope or use_mla or interleave_ratio > 0.0)
+            if self._use_custom:
+                self.tfm = CustomTransformer(
+                    d_model=d_model,
+                    nhead=nhead,
+                    num_encoder_layers=num_encoder_layers,
+                    num_decoder_layers=num_decoder_layers,
+                    dim_feedforward=dim_feedforward,
+                    dropout=dropout,
+                    use_mla=use_mla,
+                    interleave_ratio=interleave_ratio,
+                    use_rope=use_rope,
+                    max_position_embeddings=max_position_embeddings,
+                )
+            else:
+                self.tfm = nn.Transformer(
+                    d_model=d_model,
+                    nhead=nhead,
+                    num_encoder_layers=num_encoder_layers,
+                    num_decoder_layers=num_decoder_layers,
+                    dim_feedforward=dim_feedforward,
+                    dropout=dropout,
+                    batch_first=True,
+                )
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         if tie_embeddings:
             self.lm_head.weight = self.emb.weight
@@ -77,9 +106,11 @@ class TinySeq2Seq(nn.Module):
         mask_lengths: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | None]:
         device = input_ids.device
-        enc = self.emb(input_ids)
-        if self.pe is not None:
+        enc = self.emb(input_ids) * self.embedding_scale
+        if self.architecture != "t5" and self.pe is not None:
             enc = self.pe(enc)
+        if self.architecture == "t5":
+            enc = self.dropout_layer(enc)
         src_kpm = attention_mask == 0
 
         if decoder_input_ids is None:
@@ -91,13 +122,24 @@ class TinySeq2Seq(nn.Module):
 
         y_inp = decoder_input_ids
 
-        dec = self.emb(y_inp)
-        if self.pe is not None:
+        dec = self.emb(y_inp) * self.embedding_scale
+        if self.architecture != "t5" and self.pe is not None:
             dec = self.pe(dec)
+        if self.architecture == "t5":
+            dec = self.dropout_layer(dec)
         tgt_mask = self._subsequent_mask(y_inp.size(1), device)
         tgt_kpm = y_inp == self.pad_id
 
-        if self._use_custom:
+        if self.architecture == "t5":
+            mem = self.tfm.encode(enc, key_padding_mask=src_kpm)
+            out = self.tfm.decode(
+                dec,
+                mem,
+                self_attn_mask=tgt_mask,
+                self_key_padding_mask=tgt_kpm,
+                cross_key_padding_mask=src_kpm,
+            )
+        elif self._use_custom:
             mem = self.tfm.encode(enc, src_key_padding_mask=src_kpm)
             out = self.tfm.decode(
                 dec,
