@@ -2,13 +2,13 @@
 
 import argparse
 
-from src.cli import cmd_overfit
+from run import cmd_overfit
 from src.utils.config import add_common_overrides
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Sanity check: forza l'overfit su un singolo batch usando src.cli overfit",
+        description="Sanity check: forza l'overfit su un singolo batch usando src.run overfit",
     )
     add_common_overrides(parser)
     return parser

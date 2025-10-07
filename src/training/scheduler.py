@@ -1,40 +1,47 @@
-"""Learning rate scheduler utilities."""
+"""Learning rate scheduler utilities.
+
+This module provides functions to create learning rate schedulers with warmup
+and decay, commonly used in training Transformers. The main entry point is
+`create_scheduler`, which returns a callable compatible with `LambdaLR`.
+"""
 
 from __future__ import annotations
 
-import math
+import math, torch
 from typing import Callable
+
+SCHEDULE_FN = Callable[[int, int, int], float]
 
 
 def _clamp_step(step: int, total_steps: int) -> int:
-    """Clamp ``step`` within ``[0, total_steps]`` to keep schedules stable."""
-
+    """Clamps a step to be within the valid range [0, total_steps]."""
     return max(0, min(step, total_steps))
 
 
 def _cosine_with_warmup(step: int, warmup_steps: int, total_steps: int) -> float:
+    """Cosine decay schedule with linear warmup."""
     step = _clamp_step(step, total_steps)
-    if warmup_steps > 0 and step <= warmup_steps:
-        return step / max(1, warmup_steps)
-    if total_steps <= warmup_steps:
-        return 1.0
-    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
-    progress = max(0.0, min(1.0, progress))
+    if warmup_steps > 0 and step < warmup_steps:
+        return float(step) / float(max(1, warmup_steps))
+    
+    # After warmup, decay starts
+    progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
     return 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
 def _linear_with_warmup(step: int, warmup_steps: int, total_steps: int) -> float:
+    """Linear decay schedule with linear warmup."""
     step = _clamp_step(step, total_steps)
-    if warmup_steps > 0 and step <= warmup_steps:
-        return step / max(1, warmup_steps)
-    if total_steps <= warmup_steps:
-        return 0.0
-    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
-    progress = max(0.0, min(1.0, progress))
-    return max(0.0, 1.0 - progress)
+    if warmup_steps > 0 and step < warmup_steps:
+        return float(step) / float(max(1, warmup_steps))
+
+    # After warmup, decay starts
+    progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+    return 1.0 - progress
 
 
-SCHEDULES: dict[str, Callable[[int, int, int], float]] = {
+# Registry of available schedule functions
+SCHEDULES: dict[str, SCHEDULE_FN] = {
     "cosine": _cosine_with_warmup,
     "linear": _linear_with_warmup,
 }
@@ -42,48 +49,46 @@ SCHEDULES: dict[str, Callable[[int, int, int], float]] = {
 
 def create_scheduler(
     name: str,
+    optimizer: torch.optim.Optimizer,
     *,
-    warmup_ratio: float | None,
-    warmup_steps: int | None,
+    warmup_ratio: float = 0.0,
     total_steps: int,
     min_lr_ratio: float = 0.0,
-) -> Callable[[int], float]:
-    """Return a scheduler closure with warmup support.
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Creates a `LambdaLR` scheduler with warmup and decay.
 
-    ``warmup_steps`` keeps backward compatibility with previous configurations,
-    while ``warmup_ratio`` is the preferred modern API.
+    This factory function simplifies the creation of standard learning rate
+    schedulers used in NLP.
+
+    Args:
+        name: The name of the schedule to use (e.g., 'cosine', 'linear').
+        optimizer: The PyTorch optimizer to wrap.
+        warmup_ratio: The fraction of `total_steps` to use for linear warmup.
+        total_steps: The total number of training steps.
+        min_lr_ratio: The minimum learning rate as a fraction of the initial
+            learning rate. The LR will not decay below `initial_lr * min_lr_ratio`.
+
+    Returns:
+        A configured `LambdaLR` scheduler instance.
+
+    Raises:
+        ValueError: If `total_steps` is not positive or an unknown schedule
+            name is provided.
     """
-
     if total_steps <= 0:
-        raise ValueError("total_steps must be a positive integer")
+        raise ValueError("total_steps must be a positive integer.")
 
     schedule_fn = SCHEDULES.get(name.lower())
     if schedule_fn is None:
-        raise ValueError(f"Unsupported scheduler '{name}'. Available: {sorted(SCHEDULES)}")
+        raise ValueError(f"Unsupported scheduler '{name}'. Available: {list(SCHEDULES.keys())}")
 
-    min_lr_ratio = float(min_lr_ratio)
-    if not math.isfinite(min_lr_ratio):
-        raise ValueError("min_lr_ratio must be finite")
-    min_lr_ratio = max(0.0, min(1.0, min_lr_ratio))
-
-    if warmup_steps is not None:
-        warmup_steps = max(0, int(warmup_steps))
-        if warmup_ratio is None:
-            warmup_ratio = warmup_steps / total_steps
-    else:
-        warmup_ratio = 0.0 if warmup_ratio is None else max(0.0, warmup_ratio)
-        warmup_steps = int(total_steps * warmup_ratio)
-
-    warmup_steps = min(warmup_steps, total_steps)
-
-    def scheduler(step: int) -> float:
-        scale = schedule_fn(step, warmup_steps, total_steps)
+    warmup_steps = int(total_steps * warmup_ratio)
+    
+    def lr_lambda(current_step: int) -> float:
+        """Calculates the learning rate multiplier for a given step."""
+        # Calculate the decay factor from the schedule function
+        scale = schedule_fn(current_step, warmup_steps, total_steps)
+        # Ensure the learning rate doesn't fall below the minimum ratio
         return max(min_lr_ratio, scale)
 
-    return scheduler
-
-
-def cosine_with_warmup(step: int, warmup: int, max_steps: int) -> float:
-    """Backward compatible cosine schedule returning the raw scale factor."""
-
-    return _cosine_with_warmup(step, warmup, max_steps)
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)

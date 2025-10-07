@@ -1,4 +1,10 @@
-"""Core transformer layers and positional encodings."""
+"""Core transformer layers, attention mechanisms, and positional encodings.
+
+This module provides the building blocks for constructing Transformer models,
+including several architectural variants like standard Transformers, T5-style
+models with relative position biases, and custom models with features like
+Rotary Positional Embeddings (RoPE) and Multi-Linear Attention (MLA).
+"""
 
 from __future__ import annotations
 
@@ -11,27 +17,58 @@ import torch.nn.functional as F
 
 
 class SinusoidalPE(nn.Module):
-    """Standard sinusoidal positional encoding."""
+    """Standard sinusoidal positional encoding.
+
+    This module injects information about the relative or absolute position of
+    tokens in the sequence. The positional encodings have the same dimension as
+    the embeddings so that they can be summed. The implementation is based on
+    the original Transformer paper "Attention Is All You Need".
+
+    The positional encodings are registered as a buffer and are not considered
+    model parameters.
+    """
 
     def __init__(self, d_model: int, max_len: int = 2048):
+        """Initializes the SinusoidalPE module.
+
+        Args:
+            d_model: The dimensionality of the embeddings.
+            max_len: The maximum sequence length that this model might ever see.
+        """
         super().__init__()
         pe = torch.zeros(max_len, d_model)
         pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(pos * div)
-        pe[:, 1::2] = torch.cos(pos * div)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(pos * div_term)
+        pe[:, 1::2] = torch.cos(pos * div_term)
         self.register_buffer("pe", pe.unsqueeze(0), persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Adds positional encoding to the input tensor.
+
+        Args:
+            x: The input tensor of embeddings.
+               Shape: (batch_size, seq_len, d_model)
+
+        Returns:
+            The input tensor with added positional encodings.
+            Shape: (batch_size, seq_len, d_model)
+        """
+        # Add positional encodings up to the sequence length of the input
         return x + self.pe[:, : x.size(1)]
 
 
 class RotaryEmbedding(nn.Module):
     """Rotary positional embeddings (RoPE).
 
-    The implementation follows the formulation used in GPT-NeoX/LLama style
-    models where cos/sin caches are generated lazily and applied to query/key
-    projections inside the attention module.
+    RoPE encodes absolute position information with a rotation matrix and naturally
+    incorporates explicit relative position dependency in self-attention. It has
+    become a popular choice in modern language models like LLaMA.
+
+    This implementation pre-computes the sinusoidal frequencies and applies them
+    to query and key projections within the attention module.
     """
 
     def __init__(
@@ -40,51 +77,103 @@ class RotaryEmbedding(nn.Module):
         max_position_embeddings: int = 2048,
         base: int = 10000,
     ) -> None:
+        """Initializes the RotaryEmbedding module.
+
+        Args:
+            dim: The dimension of the rotary embeddings, typically `head_dim`.
+            max_position_embeddings: The maximum sequence length for pre-computing
+                the cache.
+            base: The base for the sinusoidal frequencies.
+
+        Raises:
+            ValueError: If `dim` is not an even number.
+        """
         super().__init__()
         if dim % 2 != 0:
-            raise ValueError("RotaryEmbedding requires an even dimension")
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+            raise ValueError("RotaryEmbedding requires an even dimension.")
+
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.max_seq_len_cached = max_position_embeddings
         self._build_cache(max_position_embeddings)
 
     def _build_cache(self, seq_len: int) -> None:
+        """Pre-computes and caches the cosine and sine matrices."""
         t = torch.arange(seq_len, dtype=self.inv_freq.dtype, device=self.inv_freq.device)
         freqs = torch.outer(t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
-        cos_cached = emb.cos()
-        sin_cached = emb.sin()
-        self.register_buffer("cos_cached", cos_cached, persistent=False)
-        self.register_buffer("sin_cached", sin_cached, persistent=False)
+        self.register_buffer("cos_cached", emb.cos(), persistent=False)
+        self.register_buffer("sin_cached", emb.sin(), persistent=False)
 
-    def get_cos_sin(self, seq_len: int, device, dtype) -> tuple[torch.Tensor, torch.Tensor]:
+    def get_cos_sin(
+        self, seq_len: int, device: torch.device, dtype: torch.dtype
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Retrieves or re-computes the cos/sin caches for a given sequence length.
+
+        If `seq_len` exceeds the cached length, the cache is rebuilt with a
+        slightly larger size to avoid frequent re-computation.
+
+        Args:
+            seq_len: The sequence length of the current batch.
+            device: The device of the input tensor.
+            dtype: The data type of the input tensor.
+
+        Returns:
+            A tuple containing the cosine and sine caches.
+        """
         if seq_len > self.max_seq_len_cached:
-            self.max_seq_len_cached = int(seq_len * 1.1)
+            # Rebuild cache with some headroom
+            self.max_seq_len_cached = int(seq_len * 1.2)
             self._build_cache(self.max_seq_len_cached)
-        cos = self.cos_cached[:seq_len].to(device=device, dtype=dtype)
-        sin = self.sin_cached[:seq_len].to(device=device, dtype=dtype)
-        return cos, sin
+
+        return (
+            self.cos_cached[:seq_len].to(device=device, dtype=dtype),
+            self.sin_cached[:seq_len].to(device=device, dtype=dtype),
+        )
 
 
 def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """Rotates half of the hidden dimensions."""
     x1, x2 = x[..., : x.size(-1) // 2], x[..., x.size(-1) // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
 
 def apply_rotary_pos_emb(
-    tensor: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
+    tensor: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 ) -> torch.Tensor:
+    """Applies rotary positional embeddings to the input tensor.
+
+    Args:
+        tensor: The input tensor (query or key).
+                Shape: (batch, n_heads, seq_len, head_dim)
+        cos: The cosine cache. Shape: (seq_len, head_dim)
+        sin: The sine cache. Shape: (seq_len, head_dim)
+
+    Returns:
+        The tensor with applied rotary embeddings.
+    """
+    # Reshape cos and sin to be broadcastable
     cos = cos.unsqueeze(0).unsqueeze(0)
     sin = sin.unsqueeze(0).unsqueeze(0)
     return (tensor * cos) + (_rotate_half(tensor) * sin)
 
 
 class ScaledDotProductAttention(nn.Module):
+    """Computes scaled dot-product attention.
+
+    This is the core component of the multi-head attention mechanism, calculating
+    attention scores and producing the weighted sum of values.
+    """
+
     def __init__(self, head_dim: int, dropout: float = 0.0) -> None:
+        """Initializes the ScaledDotProductAttention module.
+
+        Args:
+            head_dim: The dimensionality of each attention head.
+            dropout: The dropout rate applied to the attention weights.
+        """
         super().__init__()
-        self.scale = head_dim ** -0.5
+        self.scale = head_dim**-0.5
         self.dropout = nn.Dropout(dropout)
 
     def forward(
@@ -95,30 +184,57 @@ class ScaledDotProductAttention(nn.Module):
         attn_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Performs the scaled dot-product attention.
+
+        Args:
+            query: Query tensor. Shape: (batch, n_heads, q_len, head_dim)
+            key: Key tensor. Shape: (batch, n_heads, k_len, head_dim)
+            value: Value tensor. Shape: (batch, n_heads, v_len, head_dim)
+            attn_mask: Causal or other attention mask. Can be boolean or float.
+                       Shape: (q_len, k_len) or broadcastable.
+            key_padding_mask: Mask for padding tokens in the key sequence.
+                              Shape: (batch, k_len)
+
+        Returns:
+            The output tensor after attention.
+            Shape: (batch, n_heads, q_len, head_dim)
+        """
         scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale
+
         if key_padding_mask is not None:
+            # Reshape for broadcasting: (batch, 1, 1, k_len)
             mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
             scores = scores.masked_fill(mask, float("-inf"))
+
         if attn_mask is not None:
             if attn_mask.dtype == torch.bool:
                 scores = scores.masked_fill(attn_mask, float("-inf"))
             else:
+                # Allows for float masks (e.g., from relative position biases)
                 scores = scores + attn_mask
-        attn = torch.softmax(scores, dim=-1)
-        attn = self.dropout(attn)
-        return torch.matmul(attn, value)
+
+        attn_weights = torch.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        return torch.matmul(attn_weights, value)
 
 
 class MultiLinearAttention(nn.Module):
     """A lightweight multi-linear attention approximation.
 
-    The module implements an "elu + 1" feature map similar to Performer. It is
-    primarily intended for ablation experiments; when masks that would break
-    the linearity (e.g. causal masks) are provided the caller should fall back
-    to standard attention.
+    This module implements a feature map similar to Performer's, using `elu + 1`.
+    It is intended for ablation experiments and offers a linear complexity
+    alternative to standard softmax attention. It should not be used with masks
+    that break linearity, such as causal masks.
     """
 
     def __init__(self, head_dim: int, dropout: float = 0.0) -> None:
+        """Initializes the MultiLinearAttention module.
+
+        Args:
+            head_dim: The dimensionality of each attention head.
+            dropout: The dropout rate applied to the output.
+        """
         super().__init__()
         self.feature_map = lambda x: F.elu(x) + 1
         self.dropout = nn.Dropout(dropout)
@@ -131,21 +247,41 @@ class MultiLinearAttention(nn.Module):
         value: torch.Tensor,
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Performs the multi-linear attention computation.
+
+        Args:
+            query: Query tensor. Shape: (batch, n_heads, q_len, head_dim)
+            key: Key tensor. Shape: (batch, n_heads, k_len, head_dim)
+            value: Value tensor. Shape: (batch, n_heads, v_len, head_dim)
+            key_padding_mask: Mask for padding tokens in the key sequence.
+                              Shape: (batch, k_len)
+
+        Returns:
+            The output tensor after attention.
+            Shape: (batch, n_heads, q_len, head_dim)
+        """
         q = self.feature_map(query)
         k = self.feature_map(key)
-        v = value
+
         if key_padding_mask is not None:
             valid = (~key_padding_mask).unsqueeze(1).unsqueeze(-1).to(query.dtype)
             k = k * valid
-            v = v * valid
-        kv = torch.einsum("bhsd,bhsf->bhdf", k, v)
+
+        kv = torch.einsum("bhsd,bhsf->bhdf", k, value)
         z = torch.einsum("bhtd,bhd->bht", q, k.sum(dim=2)) + self.eps
-        out = torch.einsum("bhtd,bhdf->bhtf", q, kv)
-        out = out / z.unsqueeze(-1)
+        out = torch.einsum("bhtd,bhdf->bhtf", q, kv) / z.unsqueeze(-1)
         return self.dropout(out)
 
 
 class HybridAttention(nn.Module):
+    """A flexible multi-head attention module.
+
+    This module combines several features:
+    - Standard scaled dot-product attention.
+    - Optional Rotary Positional Embeddings (RoPE).
+    - Optional interpolation with Multi-Linear Attention (MLA) for efficiency.
+    """
+
     def __init__(
         self,
         d_model: int,
@@ -157,6 +293,21 @@ class HybridAttention(nn.Module):
         use_rope: bool = False,
         max_position_embeddings: int = 2048,
     ) -> None:
+        """Initializes the HybridAttention module.
+
+        Args:
+            d_model: The total dimensionality of the input.
+            num_heads: The number of attention heads.
+            dropout: The dropout rate.
+            use_mla: Whether to enable the MLA variant.
+            interleave_ratio: The ratio to interpolate between standard attention
+                and MLA. If > 0, MLA is used.
+            use_rope: Whether to enable Rotary Positional Embeddings.
+            max_position_embeddings: Max sequence length for RoPE cache.
+
+        Raises:
+            ValueError: If d_model is not divisible by num_heads.
+        """
         super().__init__()
         if d_model % num_heads != 0:
             raise ValueError("d_model must be divisible by num_heads")
@@ -165,10 +316,12 @@ class HybridAttention(nn.Module):
         self.head_dim = d_model // num_heads
         self.use_mla = use_mla
         self.interleave_ratio = float(interleave_ratio)
+
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
         self.out_proj = nn.Linear(d_model, d_model)
+
         self.scaled_dot = ScaledDotProductAttention(self.head_dim, dropout)
         self.mla = MultiLinearAttention(self.head_dim, dropout) if use_mla else None
         self.use_rope = use_rope
@@ -180,26 +333,16 @@ class HybridAttention(nn.Module):
 
     @staticmethod
     def _reshape_heads(x: torch.Tensor, num_heads: int) -> torch.Tensor:
+        """Splits the last dimension into (num_heads, head_dim)."""
         batch, seq_len, dim = x.size()
         head_dim = dim // num_heads
         return x.view(batch, seq_len, num_heads, head_dim).transpose(1, 2)
 
     @staticmethod
     def _merge_heads(x: torch.Tensor) -> torch.Tensor:
+        """Merges the head and dimension axes back into a single dimension."""
         batch, heads, seq_len, dim = x.size()
         return x.transpose(1, 2).reshape(batch, seq_len, heads * dim)
-
-    @staticmethod
-    def _prepare_attn_mask(mask: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
-        if mask is None:
-            return None
-        if mask.dim() == 2:
-            return mask.unsqueeze(0).unsqueeze(0)
-        if mask.dim() == 3:
-            return mask.unsqueeze(1)
-        if mask.dim() != 4:
-            raise ValueError("Unsupported attention mask dimensions")
-        return mask
 
     def forward(
         self,
@@ -209,28 +352,40 @@ class HybridAttention(nn.Module):
         attn_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        attn_mask = self._prepare_attn_mask(attn_mask)
+        """Performs the hybrid attention forward pass.
+
+        Args:
+            query: Query tensor. Shape: (batch, q_len, d_model)
+            key: Key tensor. Shape: (batch, k_len, d_model)
+            value: Value tensor. Shape: (batch, v_len, d_model)
+            attn_mask: Causal or other attention mask.
+            key_padding_mask: Mask for padding tokens in the key sequence.
+
+        Returns:
+            The output tensor. Shape: (batch, q_len, d_model)
+        """
+        # Project and reshape Q, K, V
         q = self._reshape_heads(self.q_proj(query), self.num_heads)
         k = self._reshape_heads(self.k_proj(key), self.num_heads)
         v = self._reshape_heads(self.v_proj(value), self.num_heads)
 
+        # Apply RoPE if enabled
         if self.use_rope and self.rope is not None:
             cos_q, sin_q = self.rope.get_cos_sin(q.size(-2), q.device, q.dtype)
             cos_k, sin_k = self.rope.get_cos_sin(k.size(-2), k.device, k.dtype)
             q = apply_rotary_pos_emb(q, cos_q, sin_q)
             k = apply_rotary_pos_emb(k, cos_k, sin_k)
 
+        # Standard attention is always computed as a base
         dot_out = self.scaled_dot(q, k, v, attn_mask=attn_mask, key_padding_mask=key_padding_mask)
+
+        # MLA is only used if enabled, no causal mask is present, and ratio > 0
         use_mla = self.use_mla and self.interleave_ratio > 0.0 and attn_mask is None and self.mla is not None
         if use_mla:
             mla_out = self.mla(q, k, v, key_padding_mask=key_padding_mask)
             ratio = max(0.0, min(1.0, self.interleave_ratio))
-            if ratio >= 1.0:
-                attn_out = mla_out
-            elif ratio <= 0.0:
-                attn_out = dot_out
-            else:
-                attn_out = (1 - ratio) * dot_out + ratio * mla_out
+            # Interpolate between standard and linear attention
+            attn_out = (1 - ratio) * dot_out + ratio * mla_out
         else:
             attn_out = dot_out
 
@@ -239,6 +394,8 @@ class HybridAttention(nn.Module):
 
 
 class PositionwiseFeedForward(nn.Module):
+    """A standard position-wise feed-forward network."""
+
     def __init__(self, d_model: int, dim_feedforward: int, dropout: float) -> None:
         super().__init__()
         self.linear1 = nn.Linear(d_model, dim_feedforward)
@@ -251,6 +408,8 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class TransformerEncoderLayer(nn.Module):
+    """A single layer of the custom Transformer encoder."""
+
     def __init__(
         self,
         d_model: int,
@@ -285,16 +444,24 @@ class TransformerEncoderLayer(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        src = src + self.dropout1(
-            self.self_attn(src, src, src, attn_mask=src_mask, key_padding_mask=src_key_padding_mask)
+        # Pre-LN is more common in modern transformers, but this follows Post-LN
+        # from the original paper, consistent with nn.Transformer.
+        # x -> Self-Attention -> Add & Norm
+        x = src
+        attn_out = self.self_attn(
+            x, x, x, attn_mask=src_mask, key_padding_mask=src_key_padding_mask
         )
-        src = self.norm1(src)
-        src = src + self.dropout2(self.ff(src))
-        src = self.norm2(src)
-        return src
+        x = self.norm1(x + self.dropout1(attn_out))
+
+        # Feed-Forward -> Add & Norm
+        ff_out = self.ff(x)
+        x = self.norm2(x + self.dropout2(ff_out))
+        return x
 
 
 class TransformerDecoderLayer(nn.Module):
+    """A single layer of the custom Transformer decoder."""
+
     def __init__(
         self,
         d_model: int,
@@ -309,22 +476,10 @@ class TransformerDecoderLayer(nn.Module):
     ) -> None:
         super().__init__()
         self.self_attn = HybridAttention(
-            d_model,
-            nhead,
-            dropout,
-            use_mla=use_mla,
-            interleave_ratio=interleave_ratio,
-            use_rope=use_rope,
-            max_position_embeddings=max_position_embeddings,
+            d_model, nhead, dropout, use_rope=use_rope, max_position_embeddings=max_position_embeddings,
         )
         self.cross_attn = HybridAttention(
-            d_model,
-            nhead,
-            dropout,
-            use_mla=use_mla,
-            interleave_ratio=interleave_ratio,
-            use_rope=use_rope,
-            max_position_embeddings=max_position_embeddings,
+            d_model, nhead, dropout, use_mla=use_mla, interleave_ratio=interleave_ratio,
         )
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
@@ -342,33 +497,32 @@ class TransformerDecoderLayer(nn.Module):
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         memory_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        tgt = tgt + self.dropout1(
-            self.self_attn(
-                tgt,
-                tgt,
-                tgt,
-                attn_mask=tgt_mask,
-                key_padding_mask=tgt_key_padding_mask,
-            )
+        x = tgt
+        # Masked Self-Attention
+        attn_out = self.self_attn(
+            x, x, x, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask
         )
-        tgt = self.norm1(tgt)
-        tgt = tgt + self.dropout2(
-            self.cross_attn(
-                tgt,
-                memory,
-                memory,
-                attn_mask=None,
-                key_padding_mask=memory_key_padding_mask,
-            )
+        x = self.norm1(x + self.dropout1(attn_out))
+
+        # Cross-Attention
+        cross_attn_out = self.cross_attn(
+            x, memory, memory, attn_mask=None, key_padding_mask=memory_key_padding_mask
         )
-        tgt = self.norm2(tgt)
-        tgt = tgt + self.dropout3(self.ff(tgt))
-        tgt = self.norm3(tgt)
-        return tgt
+        x = self.norm2(x + self.dropout2(cross_attn_out))
+
+        # Feed-Forward
+        ff_out = self.ff(x)
+        x = self.norm3(x + self.dropout3(ff_out))
+        return x
 
 
 class CustomTransformer(nn.Module):
-    """Minimal transformer stack used for optional model variants."""
+    """A custom Transformer encoder-decoder stack.
+
+    This module provides an interface similar to `nn.Transformer` but is built
+    using the custom `TransformerEncoderLayer` and `TransformerDecoderLayer`,
+    allowing for features like RoPE and MLA.
+    """
 
     def __init__(
         self,
@@ -388,14 +542,9 @@ class CustomTransformer(nn.Module):
         self.encoder_layers = nn.ModuleList(
             [
                 TransformerEncoderLayer(
-                    d_model,
-                    nhead,
-                    dim_feedforward,
-                    dropout,
-                    use_mla=use_mla,
-                    interleave_ratio=interleave_ratio,
-                    use_rope=use_rope,
-                    max_position_embeddings=max_position_embeddings,
+                    d_model, nhead, dim_feedforward, dropout,
+                    use_mla=use_mla, interleave_ratio=interleave_ratio,
+                    use_rope=use_rope, max_position_embeddings=max_position_embeddings,
                 )
                 for _ in range(num_encoder_layers)
             ]
@@ -403,14 +552,9 @@ class CustomTransformer(nn.Module):
         self.decoder_layers = nn.ModuleList(
             [
                 TransformerDecoderLayer(
-                    d_model,
-                    nhead,
-                    dim_feedforward,
-                    dropout,
-                    use_mla=use_mla,
-                    interleave_ratio=interleave_ratio,
-                    use_rope=use_rope,
-                    max_position_embeddings=max_position_embeddings,
+                    d_model, nhead, dim_feedforward, dropout,
+                    use_mla=use_mla, interleave_ratio=interleave_ratio,
+                    use_rope=use_rope, max_position_embeddings=max_position_embeddings,
                 )
                 for _ in range(num_decoder_layers)
             ]
@@ -440,17 +584,24 @@ class CustomTransformer(nn.Module):
         output = tgt
         for layer in self.decoder_layers:
             output = layer(
-                output,
-                memory,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=tgt_key_padding_mask,
+                output, memory,
+                tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask,
                 memory_key_padding_mask=memory_key_padding_mask,
             )
         return self.decoder_norm(output)
 
 
+# ==============================================================================
+# T5-Style Components
+# ==============================================================================
+
+
 class RelativePositionBias(nn.Module):
-    """Implements T5-style relative position bias with bucketing."""
+    """Implements T5-style relative position bias with bucketing.
+
+    This allows the model to learn position-dependent attention biases without
+    relying on absolute positional encodings.
+    """
 
     def __init__(
         self,
@@ -461,19 +612,19 @@ class RelativePositionBias(nn.Module):
         bidirectional: bool = True,
     ) -> None:
         super().__init__()
-        if num_buckets <= 0:
-            raise ValueError("num_buckets must be positive")
-        if num_heads <= 0:
-            raise ValueError("num_heads must be positive")
-        self.num_heads = int(num_heads)
-        self.num_buckets = int(num_buckets)
-        self.max_distance = int(max_distance)
-        self.bidirectional = bool(bidirectional)
+        if num_buckets <= 0 or num_heads <= 0:
+            raise ValueError("num_buckets and num_heads must be positive")
+        self.num_heads = num_heads
+        self.num_buckets = num_buckets
+        self.max_distance = max_distance
+        self.bidirectional = bidirectional
+        # Learnable embedding for each bucket and head
         self.relative_attention_bias = nn.Embedding(self.num_buckets, self.num_heads)
 
     def _relative_position_bucket(self, relative_position: torch.Tensor) -> torch.Tensor:
+        """Calculates the bucket index for each relative position."""
         num_buckets = self.num_buckets
-        max_distance = max(1, self.max_distance)
+        max_dist = self.max_distance
         relative_buckets = torch.zeros_like(relative_position, dtype=torch.long)
 
         if self.bidirectional:
@@ -483,14 +634,16 @@ class RelativePositionBias(nn.Module):
         else:
             relative_position = -torch.min(relative_position, torch.zeros_like(relative_position))
 
-        max_exact = max(1, num_buckets // 2)
+        max_exact = num_buckets // 2
         is_small = relative_position < max_exact
-        log_ratio = math.log(max_distance / max_exact) if max_distance > max_exact else 1.0
+
+        # For positions beyond max_exact, use a logarithmic scale
+        log_ratio = math.log(max_dist / max_exact) if max_dist > max_exact else 1.0
         large_pos = max_exact + (
             torch.log(relative_position.float() / max_exact + 1e-6) / log_ratio
         ) * (num_buckets - max_exact)
-        large_pos = large_pos.long()
-        large_pos = torch.min(large_pos, torch.full_like(large_pos, num_buckets - 1))
+        large_pos = torch.min(large_pos.long(), torch.full_like(large_pos, num_buckets - 1))
+
         relative_buckets += torch.where(is_small, relative_position, large_pos)
         return relative_buckets
 
@@ -502,16 +655,28 @@ class RelativePositionBias(nn.Module):
         device: torch.device,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        context_position = torch.arange(query_length, dtype=torch.long, device=device)[:, None]
-        memory_position = torch.arange(key_length, dtype=torch.long, device=device)[None, :]
-        relative_position = memory_position - context_position
+        """Computes the relative position bias tensor.
+
+        Returns:
+            A tensor of shape (1, num_heads, query_length, key_length)
+        """
+        context_pos = torch.arange(query_length, dtype=torch.long, device=device)[:, None]
+        memory_pos = torch.arange(key_length, dtype=torch.long, device=device)[None, :]
+        relative_position = memory_pos - context_pos
+
         bucket = self._relative_position_bucket(relative_position)
         values = self.relative_attention_bias(bucket)
-        values = values.permute(2, 0, 1).unsqueeze(0)
-        return values.to(dtype)
+        # Reshape to (1, num_heads, query_length, key_length)
+        return values.permute(2, 0, 1).unsqueeze(0).to(dtype)
 
 
 class T5Attention(nn.Module):
+    """T5-style multi-head self-attention.
+
+    This version uses pre-LayerNorm (as is standard in T5) and supports
+    relative position biases. Projections (q, k, v, out) are bias-free.
+    """
+
     def __init__(
         self,
         d_model: int,
@@ -527,6 +692,7 @@ class T5Attention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
         self.relative_bias = relative_bias
+
         self.q = nn.Linear(d_model, d_model, bias=False)
         self.k = nn.Linear(d_model, d_model, bias=False)
         self.v = nn.Linear(d_model, d_model, bias=False)
@@ -534,91 +700,86 @@ class T5Attention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def _reshape(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Splits the last dimension into (num_heads, head_dim)."""
         batch, seq_len, dim = tensor.size()
-        tensor = tensor.view(batch, seq_len, self.num_heads, self.head_dim)
-        return tensor.transpose(1, 2)
+        return tensor.view(batch, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
     def _merge(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Merges the head and dimension axes back into a single dimension."""
         batch, heads, seq_len, dim = tensor.size()
         return tensor.transpose(1, 2).reshape(batch, seq_len, heads * dim)
-
-    def _prepare_attention_mask(self, mask: Optional[torch.Tensor], target: torch.Tensor) -> Optional[torch.Tensor]:
-        if mask is None:
-            return None
-        if mask.dim() == 2:
-            mask = mask.unsqueeze(0).unsqueeze(0)
-        elif mask.dim() == 3:
-            mask = mask.unsqueeze(1)
-        elif mask.dim() != 4:
-            raise ValueError("Unsupported attention mask dimensions")
-        if mask.size(-1) != target.size(-1):
-            mask = mask.expand(-1, -1, -1, target.size(-1))
-        return mask
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         *,
-        attention_mask: Optional[torch.Tensor] = None,
         key_value_states: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
         position_bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Performs the T5 attention forward pass.
+
+        Args:
+            hidden_states: Input tensor. Shape: (batch, seq_len, d_model)
+            key_value_states: Optional key/value states for cross-attention.
+            key_padding_mask: Mask for padding tokens.
+            position_bias: Pre-computed position bias tensor.
+
+        Returns:
+            The output tensor.
+        """
+        is_cross_attention = key_value_states is not None
         query = self._reshape(self.q(hidden_states))
-        if key_value_states is None:
-            key_states = hidden_states
-            value_states = hidden_states
-        else:
-            key_states = key_value_states
-            value_states = key_value_states
-        key = self._reshape(self.k(key_states))
-        value = self._reshape(self.v(value_states))
+
+        if is_cross_attention:
+            key = self._reshape(self.k(key_value_states))
+            value = self._reshape(self.v(key_value_states))
+        else: # Self-attention
+            key = self._reshape(self.k(hidden_states))
+            value = self._reshape(self.v(hidden_states))
 
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.head_dim)
 
+        # Apply position bias if available
         if self.relative_bias is not None and position_bias is None:
             position_bias = self.relative_bias(
-                query_length=query.size(-2),
-                key_length=key.size(-2),
-                device=query.device,
-                dtype=query.dtype,
+                query.size(-2), key.size(-2), device=query.device, dtype=query.dtype
             )
         if position_bias is not None:
-            scores = scores + position_bias
+            scores += position_bias
 
         if key_padding_mask is not None:
-            mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
+            mask = key_padding_mask.unsqueeze(1).unsqueeze(2) # (B, 1, 1, K_len)
             scores = scores.masked_fill(mask, torch.finfo(scores.dtype).min)
-
-        if attention_mask is not None:
-            attn_mask = self._prepare_attention_mask(attention_mask, scores)
-            if attn_mask.dtype == torch.bool:
-                scores = scores.masked_fill(attn_mask, torch.finfo(scores.dtype).min)
-            else:
-                scores = scores + attn_mask.to(scores.dtype)
 
         attn_weights = torch.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
-        attn_output = torch.matmul(attn_weights, value)
-        attn_output = self._merge(attn_output)
+        attn_output = self._merge(torch.matmul(attn_weights, value))
         return self.out(attn_output)
 
 
 class T5FeedForward(nn.Module):
+    """T5-style gated feed-forward network (Gated GELU)."""
+
     def __init__(self, d_model: int, dim_feedforward: int, dropout: float) -> None:
         super().__init__()
-        self.wi = nn.Linear(d_model, dim_feedforward * 2, bias=False)
+        # T5 uses a wider intermediate layer for the gating mechanism
+        self.wi_0 = nn.Linear(d_model, dim_feedforward, bias=False)
+        self.wi_1 = nn.Linear(d_model, dim_feedforward, bias=False)
         self.wo = nn.Linear(dim_feedforward, d_model, bias=False)
         self.dropout = nn.Dropout(dropout)
+        self.activation = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        wi = self.wi(x)
-        gate, value = wi.chunk(2, dim=-1)
-        gated = F.gelu(gate) * value
+        gate = self.activation(self.wi_0(x))
+        hidden = self.wi_1(x)
+        gated = gate * hidden
         return self.dropout(self.wo(gated))
 
 
 class T5EncoderLayer(nn.Module):
+    """A single layer of the T5 encoder, using Pre-LayerNorm."""
+
     def __init__(
         self,
         d_model: int,
@@ -627,49 +788,36 @@ class T5EncoderLayer(nn.Module):
         dropout: float,
         *,
         layer_norm_epsilon: float,
-        relative_bias: Optional[RelativePositionBias],
+        relative_bias: RelativePositionBias,
     ) -> None:
         super().__init__()
-        self.self_attn = T5Attention(
-            d_model,
-            nhead,
-            dropout,
-            relative_bias=relative_bias,
-        )
-        self.layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
-        self.ff_layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.self_attn = T5Attention(d_model, nhead, dropout, relative_bias=relative_bias)
+        self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
         self.feed_forward = T5FeedForward(d_model, dim_feedforward, dropout)
         self.dropout = nn.Dropout(dropout)
-        self.relative_bias = relative_bias
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         *,
-        attention_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        normed = self.layer_norm(hidden_states)
-        position_bias = None
-        if self.relative_bias is not None:
-            position_bias = self.relative_bias(
-                query_length=normed.size(1),
-                key_length=normed.size(1),
-                device=normed.device,
-                dtype=normed.dtype,
-            )
-        attn_out = self.self_attn(
-            normed,
-            attention_mask=attention_mask,
-            key_padding_mask=key_padding_mask,
-            position_bias=position_bias,
-        )
-        hidden_states = hidden_states + self.dropout(attn_out)
-        hidden_states = hidden_states + self.dropout(self.feed_forward(self.ff_layer_norm(hidden_states)))
-        return hidden_states
+        # Pre-LN: Norm -> Attention -> Add
+        normed = self.norm1(hidden_states)
+        attn_out = self.self_attn(normed, key_padding_mask=key_padding_mask)
+        x = hidden_states + self.dropout(attn_out)
+
+        # Pre-LN: Norm -> FF -> Add
+        normed_ff = self.norm2(x)
+        ff_out = self.feed_forward(normed_ff)
+        x = x + self.dropout(ff_out)
+        return x
 
 
 class T5DecoderLayer(nn.Module):
+    """A single layer of the T5 decoder, using Pre-LayerNorm."""
+
     def __init__(
         self,
         d_model: int,
@@ -678,62 +826,49 @@ class T5DecoderLayer(nn.Module):
         dropout: float,
         *,
         layer_norm_epsilon: float,
-        self_relative_bias: Optional[RelativePositionBias],
+        self_relative_bias: RelativePositionBias,
     ) -> None:
         super().__init__()
-        self.self_attn = T5Attention(
-            d_model,
-            nhead,
-            dropout,
-            relative_bias=self_relative_bias,
-        )
+        self.self_attn = T5Attention(d_model, nhead, dropout, relative_bias=self_relative_bias)
         self.cross_attn = T5Attention(d_model, nhead, dropout, relative_bias=None)
-        self.self_attn_layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
-        self.cross_attn_layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
-        self.ff_layer_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.norm3 = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
         self.feed_forward = T5FeedForward(d_model, dim_feedforward, dropout)
         self.dropout = nn.Dropout(dropout)
-        self.relative_bias = self_relative_bias
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         memory: torch.Tensor,
         *,
-        self_attn_mask: Optional[torch.Tensor] = None,
         self_key_padding_mask: Optional[torch.Tensor] = None,
         cross_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        normed = self.self_attn_layer_norm(hidden_states)
-        position_bias = None
-        if self.relative_bias is not None:
-            position_bias = self.relative_bias(
-                query_length=normed.size(1),
-                key_length=normed.size(1),
-                device=normed.device,
-                dtype=normed.dtype,
-            )
-        self_attn_out = self.self_attn(
-            normed,
-            attention_mask=self_attn_mask,
-            key_padding_mask=self_key_padding_mask,
-            position_bias=position_bias,
-        )
-        hidden_states = hidden_states + self.dropout(self_attn_out)
+        # Masked Self-Attention (Pre-LN)
+        normed = self.norm1(hidden_states)
+        self_attn_out = self.self_attn(normed, key_padding_mask=self_key_padding_mask)
+        x = hidden_states + self.dropout(self_attn_out)
 
-        normed_cross = self.cross_attn_layer_norm(hidden_states)
+        # Cross-Attention (Pre-LN)
+        normed_cross = self.norm2(x)
         cross_out = self.cross_attn(
             normed_cross,
             key_value_states=memory,
             key_padding_mask=cross_key_padding_mask,
         )
-        hidden_states = hidden_states + self.dropout(cross_out)
+        x = x + self.dropout(cross_out)
 
-        hidden_states = hidden_states + self.dropout(self.feed_forward(self.ff_layer_norm(hidden_states)))
-        return hidden_states
+        # Feed-Forward (Pre-LN)
+        normed_ff = self.norm3(x)
+        ff_out = self.feed_forward(normed_ff)
+        x = x + self.dropout(ff_out)
+        return x
 
 
 class T5Transformer(nn.Module):
+    """A T5-style Transformer encoder-decoder stack."""
+
     def __init__(
         self,
         d_model: int,
@@ -748,42 +883,27 @@ class T5Transformer(nn.Module):
         layer_norm_epsilon: float = 1e-6,
     ) -> None:
         super().__init__()
+        # Encoder uses bidirectional relative positions, decoder uses unidirectional
         encoder_bias = RelativePositionBias(
-            nhead,
-            num_buckets=relative_attention_num_buckets,
-            max_distance=relative_attention_max_distance,
-            bidirectional=True,
+            nhead, relative_attention_num_buckets, relative_attention_max_distance, bidirectional=True
         )
         decoder_bias = RelativePositionBias(
-            nhead,
-            num_buckets=relative_attention_num_buckets,
-            max_distance=relative_attention_max_distance,
-            bidirectional=False,
+            nhead, relative_attention_num_buckets, relative_attention_max_distance, bidirectional=False
         )
         self.encoder_layers = nn.ModuleList(
             [
                 T5EncoderLayer(
-                    d_model,
-                    nhead,
-                    dim_feedforward,
-                    dropout,
-                    layer_norm_epsilon=layer_norm_epsilon,
-                    relative_bias=encoder_bias,
-                )
-                for _ in range(num_encoder_layers)
+                    d_model, nhead, dim_feedforward, dropout,
+                    layer_norm_epsilon=layer_norm_epsilon, relative_bias=encoder_bias
+                ) for _ in range(num_encoder_layers)
             ]
         )
         self.decoder_layers = nn.ModuleList(
             [
                 T5DecoderLayer(
-                    d_model,
-                    nhead,
-                    dim_feedforward,
-                    dropout,
-                    layer_norm_epsilon=layer_norm_epsilon,
-                    self_relative_bias=decoder_bias,
-                )
-                for _ in range(num_decoder_layers)
+                    d_model, nhead, dim_feedforward, dropout,
+                    layer_norm_epsilon=layer_norm_epsilon, self_relative_bias=decoder_bias
+                ) for _ in range(num_decoder_layers)
             ]
         )
         self.encoder_norm = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
@@ -794,16 +914,12 @@ class T5Transformer(nn.Module):
         self,
         src: torch.Tensor,
         *,
-        attention_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         output = src
         for layer in self.encoder_layers:
-            output = layer(
-                output,
-                attention_mask=attention_mask,
-                key_padding_mask=key_padding_mask,
-            )
+            output = layer(output, key_padding_mask=key_padding_mask)
+        # Final LayerNorm after the stack
         output = self.encoder_norm(output)
         return self.dropout(output)
 
@@ -812,19 +928,16 @@ class T5Transformer(nn.Module):
         tgt: torch.Tensor,
         memory: torch.Tensor,
         *,
-        self_attn_mask: Optional[torch.Tensor] = None,
         self_key_padding_mask: Optional[torch.Tensor] = None,
         cross_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         output = tgt
         for layer in self.decoder_layers:
             output = layer(
-                output,
-                memory,
-                self_attn_mask=self_attn_mask,
+                output, memory,
                 self_key_padding_mask=self_key_padding_mask,
-                cross_key_padding_mask=cross_key_padding_mask,
+                cross_key_padding_mask=cross_key_padding_mask
             )
+        # Final LayerNorm after the stack
         output = self.decoder_norm(output)
         return self.dropout(output)
-

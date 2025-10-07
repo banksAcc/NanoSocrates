@@ -23,7 +23,7 @@ datasets:
 use_rope: false
 use_mla: false
 interleave_ratio: 0.0
-architecture: "vanilla"
+architecture: "t5"
 d_model: 384
 nhead: 6
 enc_layers: 3
@@ -58,7 +58,7 @@ early_stopping:
   min_delta: 0.0
 
 wandb:
-  mode: "disabled"
+  mode: "disabled" # disabled, offline, online
   project: "nanosocrates"
   entity: null
   run_name: null

@@ -41,7 +41,7 @@ early_stopping:
   min_delta: 0.0
 
 wandb:
-  mode: "disabled"
+  mode: "disabled" # disabled, offline, online
   project: "nanosocrates"
   entity: null
   run_name: null

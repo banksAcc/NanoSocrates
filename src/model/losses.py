@@ -2,77 +2,95 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 
 
 def _align_logits_and_labels(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return tensors aligned for loss computation.
+    logits: torch.Tensor, labels: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Ensures logits and labels are aligned for loss computation.
 
-    The decoder may produce logits that are one step shorter than the labels
-    (teacher forcing with implicit <SOT>). This helper mirrors the logic used in
-    :class:`TinySeq2Seq` to keep the behaviour consistent in one place.
+    In a typical teacher-forcing setup, the decoder input is `labels[:, :-1]`,
+    producing logits that align with `labels[:, 1:]`. This function handles
+    that alignment.
+
+    Args:
+        logits: The raw output from the model's language model head.
+            Shape: (batch_size, seq_len, vocab_size)
+        labels: The ground truth target tensor.
+            Shape: (batch_size, seq_len) or (batch_size, seq_len + 1)
+
+    Returns:
+        A tuple of (logits, labels) ready for loss calculation.
+
+    Raises:
+        ValueError: If the dimensions of logits and labels are incompatible.
     """
-
     if labels.size(1) == logits.size(1):
         return logits, labels
     if labels.size(1) == logits.size(1) + 1:
+        # This is the standard case: labels include a start token that was
+        # not predicted, so we align by removing it.
         return logits, labels[:, 1:]
     raise ValueError(
-        "labels length must match decoder_input_ids or be longer by one"
+        f"Incompatible shapes: logits.size(1)={logits.size(1)} and "
+        f"labels.size(1)={labels.size(1)}. Labels must be same length as logits "
+        "or one token longer."
     )
 
 
+@torch.inference_mode()
 def _compute_span_accuracy(
     logits: torch.Tensor,
     labels: torch.Tensor,
     mask_positions: Optional[torch.Tensor],
     mask_lengths: Optional[torch.Tensor],
-    pad_id: int,
 ) -> Optional[float]:
-    if mask_positions is None or mask_lengths is None:
-        return None
-    if mask_positions.numel() == 0:
+    """Computes exact match accuracy for specified token spans.
+
+    This metric is primarily used for the 'RDF Completion 1' task, where the
+    model must predict a masked-out span of tokens.
+
+    Args:
+        logits: The model's output logits, aligned with labels.
+        labels: The ground truth labels, aligned with logits.
+        mask_positions: A tensor of start positions for each masked span.
+            Shape: (batch_size, num_spans)
+        mask_lengths: A tensor of lengths for each masked span.
+            Shape: (batch_size, num_spans)
+
+    Returns:
+        The percentage of correctly predicted spans, or None if no valid
+        spans are found.
+    """
+    if mask_positions is None or mask_lengths is None or mask_positions.numel() == 0:
         return None
 
-    # ensure we work on CPU tensors for easier iteration
     pred_ids = logits.argmax(dim=-1)
-    labels_cpu = labels.detach().cpu()
-    preds_cpu = pred_ids.detach().cpu()
-    pos_cpu = mask_positions.detach().cpu()
-    len_cpu = mask_lengths.detach().cpu()
+    total_spans = 0
+    correct_spans = 0
 
-    total = 0
-    correct = 0
+    for i in range(logits.size(0)):  # Iterate over batch
+        for pos, length in zip(mask_positions[i], mask_lengths[i]):
+            pos, length = pos.item(), length.item()
+            if length <= 0:
+                continue
 
-    batch_size = labels_cpu.size(0)
-    max_len = labels_cpu.size(1)
+            end_pos = pos + length
+            if end_pos > labels.size(1):
+                continue
 
-    for b in range(batch_size):
-        positions = pos_cpu[b]
-        lengths = len_cpu[b]
-        for pos, span_len in zip(positions.tolist(), lengths.tolist()):
-            if pos < 0 or span_len <= 0:
-                continue
-            end = pos + span_len
-            if pos >= max_len or end > max_len:
-                continue
-            target_span = labels_cpu[b, pos:end]
-            if (target_span == pad_id).any():
-                continue
-            pred_span = preds_cpu[b, pos:end]
-            total += 1
+            total_spans += 1
+            target_span = labels[i, pos:end_pos]
+            pred_span = pred_ids[i, pos:end_pos]
+
             if torch.equal(target_span, pred_span):
-                correct += 1
+                correct_spans += 1
 
-    if total == 0:
-        return None
-    return float(correct / total)
+    return float(correct_spans / total_spans) if total_spans > 0 else None
 
 
 def sequence_loss_with_span_metrics(
@@ -83,10 +101,24 @@ def sequence_loss_with_span_metrics(
     mask_positions: Optional[torch.Tensor] = None,
     mask_lengths: Optional[torch.Tensor] = None,
     compute_metrics: bool = False,
-) -> tuple[torch.Tensor, Dict[str, float]]:
-    """Compute cross-entropy loss and optional span-based accuracy."""
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """Computes cross-entropy loss and optional span-based accuracy.
 
+    Args:
+        logits: The raw output from the model.
+        labels: The ground truth labels.
+        pad_id: The ID of the padding token, to be ignored in the loss.
+        mask_positions: Start positions of spans for accuracy calculation.
+        mask_lengths: Lengths of spans for accuracy calculation.
+        compute_metrics: If True, calculates and returns the span accuracy.
+
+    Returns:
+        A tuple containing:
+        - The computed cross-entropy loss (scalar tensor).
+        - A dictionary of computed metrics (e.g., {"mask_accuracy": 0.85}).
+    """
     logits_for_loss, target = _align_logits_and_labels(logits, labels)
+
     loss = F.cross_entropy(
         logits_for_loss.reshape(-1, logits_for_loss.size(-1)),
         target.reshape(-1),
@@ -95,14 +127,10 @@ def sequence_loss_with_span_metrics(
 
     metrics: Dict[str, float] = {}
     if compute_metrics:
-        acc = _compute_span_accuracy(
-            logits_for_loss,
-            target,
-            mask_positions,
-            mask_lengths,
-            pad_id,
+        accuracy = _compute_span_accuracy(
+            logits_for_loss, target, mask_positions, mask_lengths
         )
-        if acc is not None:
-            metrics["mask_accuracy"] = acc
+        if accuracy is not None:
+            metrics["mask_accuracy"] = accuracy
 
     return loss, metrics

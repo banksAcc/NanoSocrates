@@ -1,17 +1,40 @@
-"""Seq2Seq transformer model with optional MLA and RoPE variants."""
+"""Seq2Seq transformer model with optional MLA, RoPE, and T5 variants."""
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
-
-import math
 
 from .layers import CustomTransformer, SinusoidalPE, T5Transformer
 from .losses import sequence_loss_with_span_metrics
 
 
 class TinySeq2Seq(nn.Module):
+    """A flexible sequence-to-sequence Transformer model.
+
+    This class implements a standard Transformer encoder-decoder architecture
+    with several optional customisations, including:
+    - A T5-style architecture with relative position biases.
+    - A "vanilla" architecture using either the standard `nn.Transformer` or
+      a custom implementation that supports features like Rotary Positional
+      Embeddings (RoPE) and Multi-Linear Attention (MLA).
+    - Tied input and output embeddings.
+    - Optional computation of span-based metrics for tasks like masked slot
+      prediction.
+
+    Attributes:
+        pad_id (int): The padding token ID, used for creating masks.
+        architecture (str): The selected model architecture ('vanilla' or 't5').
+        emb (nn.Embedding): The token embedding layer.
+        pe (nn.Module | None): The positional encoding layer (e.g., SinusoidalPE).
+        tfm (nn.Module): The core Transformer module.
+        lm_head (nn.Linear): The final linear layer to produce logits.
+        uses_custom_architecture (bool): Flag indicating if a custom Transformer
+            implementation is used instead of `nn.Transformer`.
+    """
+
     def __init__(
         self,
         vocab_size: int,
@@ -34,6 +57,34 @@ class TinySeq2Seq(nn.Module):
         relative_attention_max_distance: int = 128,
         layer_norm_epsilon: float = 1e-6,
     ) -> None:
+        """Initializes the TinySeq2Seq model.
+
+        Args:
+            vocab_size: The size of the vocabulary.
+            d_model: The dimensionality of the model's embeddings and hidden states.
+            nhead: The number of attention heads.
+            num_encoder_layers: The number of layers in the encoder.
+            num_decoder_layers: The number of layers in the decoder.
+            dim_feedforward: The dimension of the feed-forward networks.
+            dropout: The dropout rate.
+            pad_id: The vocabulary ID for the padding token.
+            tie_embeddings: Whether to tie the input and output embedding weights.
+            use_mla: If True, enables Multi-Linear Attention in the custom 'vanilla'
+                transformer. Incompatible with 't5' architecture.
+            use_rope: If True, enables Rotary Positional Embeddings in the custom
+                'vanilla' transformer. Incompatible with 't5' architecture.
+            interleave_ratio: The ratio for interpolating between standard attention
+                and MLA. A value > 0 activates the custom transformer.
+            max_position_embeddings: The maximum sequence length for positional encodings.
+            compute_span_metrics: If True, computes span-based metrics during loss
+                calculation, useful for tasks like masked prediction.
+            architecture: The model variant to use. Can be 'vanilla' or 't5'.
+            relative_attention_num_buckets: Number of buckets for T5 relative
+                position bias. Only used if architecture is 't5'.
+            relative_attention_max_distance: Maximum distance for T5 relative
+                position bias. Only used if architecture is 't5'.
+            layer_norm_epsilon: Epsilon for LayerNorm layers.
+        """
         super().__init__()
         self.pad_id = pad_id
         self.compute_span_metrics = bool(compute_span_metrics)
@@ -41,9 +92,14 @@ class TinySeq2Seq(nn.Module):
         if arch not in {"vanilla", "t5"}:
             raise ValueError("architecture must be 'vanilla' or 't5'")
         self.architecture = arch
+
         self.emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.embedding_scale = math.sqrt(d_model) if self.architecture == "t5" else 1.0
         self.dropout_layer = nn.Dropout(dropout)
+
+        # This flag determines if a custom implementation is needed.
+        # It's true for T5 or for 'vanilla' with RoPE/MLA features.
+        self.uses_custom_architecture: bool = False
 
         if self.architecture == "t5":
             if use_rope or use_mla or abs(float(interleave_ratio)) > 1e-8:
@@ -60,11 +116,13 @@ class TinySeq2Seq(nn.Module):
                 relative_attention_max_distance=relative_attention_max_distance,
                 layer_norm_epsilon=layer_norm_epsilon,
             )
-            self._use_custom = True
-        else:
+            self.uses_custom_architecture = True
+        else:  # vanilla architecture
             self.pe = None if use_rope else SinusoidalPE(d_model, max_len=max_position_embeddings)
-            self._use_custom = bool(use_rope or use_mla or interleave_ratio > 0.0)
-            if self._use_custom:
+            
+            # Activate custom transformer if RoPE, MLA, or interpolation is used.
+            if use_rope or use_mla or interleave_ratio > 0.0:
+                self.uses_custom_architecture = True
                 self.tfm = CustomTransformer(
                     d_model=d_model,
                     nhead=nhead,
@@ -87,12 +145,14 @@ class TinySeq2Seq(nn.Module):
                     dropout=dropout,
                     batch_first=True,
                 )
+
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         if tie_embeddings:
             self.lm_head.weight = self.emb.weight
 
     @staticmethod
     def _subsequent_mask(sz: int, device: torch.device) -> torch.Tensor:
+        """Generates a causal mask for the decoder."""
         return torch.triu(torch.ones(sz, sz, dtype=torch.bool, device=device), 1)
 
     def forward(
@@ -105,74 +165,102 @@ class TinySeq2Seq(nn.Module):
         mask_positions: torch.Tensor | None = None,
         mask_lengths: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | None]:
-        device = input_ids.device
-        enc = self.emb(input_ids) * self.embedding_scale
-        if self.architecture != "t5" and self.pe is not None:
-            enc = self.pe(enc)
-        if self.architecture == "t5":
-            enc = self.dropout_layer(enc)
-        src_kpm = attention_mask == 0
+        """Performs a forward pass through the model.
 
+        Args:
+            input_ids: The input token IDs for the encoder.
+                Shape: (batch_size, src_seq_len)
+            attention_mask: The attention mask for the encoder input, where 1 indicates
+                a valid token and 0 indicates padding.
+                Shape: (batch_size, src_seq_len)
+            decoder_input_ids: The input token IDs for the decoder. If not provided,
+                it is automatically generated from `labels` by shifting them right.
+                Shape: (batch_size, tgt_seq_len)
+            labels: The target token IDs for computing the loss. The last token is
+                used for loss calculation but not as input to the decoder.
+                Shape: (batch_size, tgt_seq_len + 1)
+            mask_positions: Start positions of masked spans for metric calculation.
+                Shape: (batch_size, num_spans)
+            mask_lengths: Lengths of masked spans for metric calculation.
+                Shape: (batch_size, num_spans)
+
+        Returns:
+            A dictionary containing:
+            - "logits": The model's output logits. Shape: (batch_size, tgt_seq_len, vocab_size)
+            - "loss": The computed cross-entropy loss, if `labels` are provided.
+            - "metrics": A dictionary of computed span metrics, if `compute_span_metrics`
+              is True and labels are provided.
+        """
+        device = input_ids.device
+        
+        # Prepare encoder inputs
+        enc = self.emb(input_ids) * self.embedding_scale
+        if self.pe is not None:
+            enc = self.pe(enc)
+        enc = self.dropout_layer(enc)
+        src_key_padding_mask = attention_mask == 0
+
+        # Prepare decoder inputs
         if decoder_input_ids is None:
             if labels is None:
-                raise ValueError("decoder_input_ids or labels must be provided")
+                raise ValueError("Either decoder_input_ids or labels must be provided.")
             if labels.size(1) < 2:
-                raise ValueError("labels must have length >= 2 to build decoder_input_ids")
+                raise ValueError("labels must have length >= 2 to build decoder_input_ids.")
             decoder_input_ids = labels[:, :-1]
 
-        y_inp = decoder_input_ids
+        dec_in = self.emb(decoder_input_ids) * self.embedding_scale
+        if self.pe is not None:
+            dec_in = self.pe(dec_in)
+        dec_in = self.dropout_layer(dec_in)
+        
+        tgt_causal_mask = self._subsequent_mask(decoder_input_ids.size(1), device)
+        tgt_key_padding_mask = decoder_input_ids == self.pad_id
 
-        dec = self.emb(y_inp) * self.embedding_scale
-        if self.architecture != "t5" and self.pe is not None:
-            dec = self.pe(dec)
+        # Execute transformer pass based on architecture
         if self.architecture == "t5":
-            dec = self.dropout_layer(dec)
-        tgt_mask = self._subsequent_mask(y_inp.size(1), device)
-        tgt_kpm = y_inp == self.pad_id
-
-        if self.architecture == "t5":
-            mem = self.tfm.encode(enc, key_padding_mask=src_kpm)
+            memory = self.tfm.encode(enc, key_padding_mask=src_key_padding_mask)
             out = self.tfm.decode(
-                dec,
-                mem,
-                self_attn_mask=tgt_mask,
-                self_key_padding_mask=tgt_kpm,
-                cross_key_padding_mask=src_kpm,
+                dec_in,
+                memory,
+                self_attn_mask=tgt_causal_mask,
+                self_key_padding_mask=tgt_key_padding_mask,
+                cross_key_padding_mask=src_key_padding_mask,
             )
-        elif self._use_custom:
-            mem = self.tfm.encode(enc, src_key_padding_mask=src_kpm)
+        elif self.uses_custom_architecture:
+            memory = self.tfm.encode(enc, src_key_padding_mask=src_key_padding_mask)
             out = self.tfm.decode(
-                dec,
-                mem,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=tgt_kpm,
-                memory_key_padding_mask=src_kpm,
+                dec_in,
+                memory,
+                tgt_mask=tgt_causal_mask,
+                tgt_key_padding_mask=tgt_key_padding_mask,
+                memory_key_padding_mask=src_key_padding_mask,
             )
-        else:
-            mem = self.tfm.encoder(enc, src_key_padding_mask=src_kpm)
+        else:  # Standard nn.Transformer
+            memory = self.tfm.encoder(enc, src_key_padding_mask=src_key_padding_mask)
             out = self.tfm.decoder(
-                dec,
-                mem,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=tgt_kpm,
-                memory_key_padding_mask=src_kpm,
+                dec_in,
+                memory,
+                tgt_mask=tgt_causal_mask,
+                tgt_key_padding_mask=tgt_key_padding_mask,
+                memory_key_padding_mask=src_key_padding_mask,
             )
+            
         logits = self.lm_head(out)
 
-        loss = None
-        metrics: dict[str, float] | None = None
-
+        # Compute loss and metrics if labels are available
+        loss, metrics = None, None
         if labels is not None:
             loss, metrics = sequence_loss_with_span_metrics(
-                logits,
-                labels,
+                logits=logits,
+                labels=labels,
                 pad_id=self.pad_id,
                 mask_positions=mask_positions,
                 mask_lengths=mask_lengths,
                 compute_metrics=self.compute_span_metrics,
             )
+            
         payload = {"logits": logits, "loss": loss}
         if metrics:
             payload["metrics"] = metrics
+            
         return payload
-

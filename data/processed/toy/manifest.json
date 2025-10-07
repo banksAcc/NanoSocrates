@@ -50,5 +50,5 @@
       "test": 4
     }
   },
-  "source_processed_dir": "data/processed"
+  "source_processed_dir": "data\\processed"
 }

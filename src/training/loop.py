@@ -1,375 +1,275 @@
+"""Main training and evaluation loop for the transformer model."""
+
+from __future__ import annotations
+
+import logging
 import math
-import os
 from collections import defaultdict
-from contextlib import nullcontext
-from inspect import signature
+from typing import TYPE_CHECKING, Any, Literal
 
 import torch
-from tqdm import tqdm
+from torch.cuda.amp import GradScaler, autocast
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
-from .scheduler import create_scheduler
+if TYPE_CHECKING:
+    import wandb
+    from torch.nn import Module
+    from torch.optim import Optimizer
+    from torch.optim.lr_scheduler import _LRScheduler
 
-
-def _supports_kwarg(fn, name):
-    try:
-        return name in signature(fn).parameters
-    except (TypeError, ValueError):  # signature may fail on some builtins
-        return False
-
-
-@torch.no_grad()
-def evaluate(model, dataloader, device, pad_id):
-    model.eval()
-    tot, n = 0.0, 0
-    metric_totals = defaultdict(float)
-    metric_counts = defaultdict(int)
-    for batch in dataloader:
-        inp = batch["input_ids"].to(device, non_blocking=True)
-        att = batch["attention_mask"].to(device, non_blocking=True)
-        lab = batch["labels"].to(device, non_blocking=True)
-        extra = {}
-        if "mask_positions" in batch:
-            extra["mask_positions"] = batch["mask_positions"].to(device, non_blocking=True)
-        if "mask_lengths" in batch:
-            extra["mask_lengths"] = batch["mask_lengths"].to(device, non_blocking=True)
-        out = model(inp, att, labels=lab, **extra)
-        loss = out["loss"].item()
-        tot += loss
-        n += 1
-        metrics = out.get("metrics") if isinstance(out, dict) else None
-        if isinstance(metrics, dict):
-            for name, value in metrics.items():
-                if isinstance(value, (int, float)):
-                    metric_totals[name] += float(value)
-                    metric_counts[name] += 1
-    avg_loss = tot / max(1, n)
-    if metric_totals:
-        averaged = {
-            name: metric_totals[name] / max(1, metric_counts[name])
-            for name in metric_totals
-        }
-        averaged["loss"] = avg_loss
-        return averaged
-    return avg_loss
+logger = logging.getLogger(__name__)
 
 
-def train_loop(
-    model,
-    train_dl,
-    val_dl,
-    cfg,
-    device,
-    pad_id,
-    steps_per_epoch,
-    *,
-    max_train_steps=0,
-    train_eval_dl=None,
-    wandb_run=None,
-    wandb_module=None,
-):
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
+class TrainingLoop:
+    """A class to encapsulate the training and validation loops.
 
-    # ✅ nuove API (evita i FutureWarning)
-    if device == "cuda":
-        grad_scaler_ctor = torch.amp.GradScaler
-        if _supports_kwarg(grad_scaler_ctor.__init__, "device_type"):
-            scaler = grad_scaler_ctor(device_type="cuda")
+    This class handles the complexities of model training, including:
+    - Iterating over epochs and batches.
+    - Gradient accumulation to simulate larger batch sizes.
+    - Automatic Mixed Precision (AMP) for faster training on compatible GPUs.
+    - Checkpointing the best model based on a validation metric.
+    - Early stopping to prevent overfitting.
+    - Logging metrics to Weights & Biases (wandb).
+    """
+
+    def __init__(
+        self,
+        model: Module,
+        optimizer: Optimizer,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        scheduler: _LRScheduler | None = None,
+        device: str | torch.device | None = None,
+        use_amp: bool = True,
+        grad_accum_steps: int = 1,
+        log_every_n_steps: int = 100,
+        checkpoint_path: str = "best_model.pt",
+        early_stopping_patience: int = 5,
+        early_stopping_metric: str = "loss",
+        early_stopping_mode: Literal["min", "max"] = "min",
+        wandb_run: "wandb.sdk.wandb_run.Run" | None = None,
+    ):
+        """Initializes the TrainingLoop.
+
+        Args:
+            model: The PyTorch model to train.
+            optimizer: The optimizer.
+            train_loader: DataLoader for the training set.
+            val_loader: DataLoader for the validation set.
+            scheduler: Optional learning rate scheduler.
+            device: The device to train on ('cuda', 'cpu'). If None, it will be
+                auto-detected.
+            use_amp: Whether to use Automatic Mixed Precision.
+            grad_accum_steps: Number of steps to accumulate gradients over.
+            log_every_n_steps: How often to log training metrics to wandb.
+            checkpoint_path: Path to save the best model checkpoint.
+            early_stopping_patience: Number of epochs to wait for improvement
+                before stopping.
+            early_stopping_metric: The validation metric to monitor for early
+                stopping and checkpointing.
+            early_stopping_mode: 'min' if a lower metric is better (e.g., loss),
+                'max' if a higher metric is better (e.g., accuracy).
+            wandb_run: An active wandb run object for logging.
+        """
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.grad_accum_steps = grad_accum_steps
+        self.log_every_n_steps = log_every_n_steps
+        self.checkpoint_path = checkpoint_path
+        self.wandb_run = wandb_run
+
+        # Early stopping setup
+        self.es_patience = early_stopping_patience
+        self.es_metric = early_stopping_metric
+        self.es_mode = early_stopping_mode
+        self.es_counter = 0
+        self.best_score = -float("inf") if self.es_mode == "max" else float("inf")
+
+        # Auto-detect device if not provided
+        if device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
-            try:
-                scaler = grad_scaler_ctor()
-            except TypeError:
-                cuda_amp = getattr(torch.cuda, "amp", None)
-                if cuda_amp is not None and hasattr(cuda_amp, "GradScaler"):
-                    scaler = cuda_amp.GradScaler()
+            self.device = device
+        logger.info(f"Using device: {self.device}")
+
+        # AMP setup
+        self.use_amp = use_amp and self.device == "cuda"
+        self.scaler = GradScaler(enabled=self.use_amp)
+        if self.use_amp:
+            logger.info("Automatic Mixed Precision (AMP) enabled.")
+
+        self.model.to(self.device)
+
+    def run(self, num_epochs: int) -> dict[str, Any]:
+        """Starts and manages the training process for a given number of epochs.
+
+        Args:
+            num_epochs: The total number of epochs to train for.
+
+        Returns:
+            A dictionary containing the best score achieved and the epoch at which
+            it occurred.
+        """
+        logger.info("Starting training...")
+        for epoch in range(1, num_epochs + 1):
+            logger.info(f"Epoch {epoch}/{num_epochs}")
+
+            train_metrics = self._train_epoch(epoch)
+            val_metrics = self._validate_epoch()
+
+            if self.scheduler:
+                # Some schedulers use metrics (e.g., ReduceLROnPlateau)
+                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    self.scheduler.step(val_metrics[self.es_metric])
                 else:
-                    raise
+                    self.scheduler.step()
 
-        autocast_fn = getattr(torch.amp, "autocast", torch.autocast)
-        try:
-            autocast_ctx = autocast_fn(device_type=device)
-        except TypeError:
-            autocast_ctx = autocast_fn(device)
-    else:
-        scaler = None
-        autocast_ctx = nullcontext()
-
-    # opzionale: migliora throughput con input variabili
-    torch.backends.cudnn.benchmark = True if device == "cuda" else False
-
-    os.makedirs(cfg["save_dir"], exist_ok=True)
-
-    steps_per_epoch = max(1, int(steps_per_epoch))
-    num_epochs = int(cfg["num_epochs"])
-    grad_accum = max(1, int(cfg.get("gradient_accumulation_steps", 1)))
-    optimizer_steps_per_epoch = math.ceil(steps_per_epoch / grad_accum)
-
-    max_train_steps = int(max_train_steps or 0)
-    total_optimizer_steps = max(1, num_epochs * optimizer_steps_per_epoch)
-    if max_train_steps > 0:
-        total_optimizer_steps = min(total_optimizer_steps, max_train_steps)
-
-    scheduler_name = str(cfg.get("scheduler", "cosine"))
-    warmup_steps_cfg = cfg.get("warmup_steps")
-    warmup_steps = None
-    if warmup_steps_cfg is not None:
-        try:
-            warmup_steps = max(0, int(warmup_steps_cfg))
-        except (TypeError, ValueError):
-            warmup_steps = 0
-    warmup_ratio_cfg = cfg.get("warmup_ratio")
-    try:
-        warmup_ratio = (
-            float(warmup_ratio_cfg) if warmup_ratio_cfg is not None else None
-        )
-    except (TypeError, ValueError):
-        warmup_ratio = None
-    try:
-        min_lr_ratio = float(cfg.get("min_lr_ratio", 0.0))
-    except (TypeError, ValueError):
-        min_lr_ratio = 0.0
-
-    lr_scheduler = create_scheduler(
-        scheduler_name,
-        warmup_ratio=warmup_ratio,
-        warmup_steps=warmup_steps,
-        total_steps=total_optimizer_steps,
-        min_lr_ratio=min_lr_ratio,
-    )
-
-    resolved_warmup_steps = warmup_steps
-    if resolved_warmup_steps is None:
-        resolved_ratio = warmup_ratio if warmup_ratio is not None else 0.0
-        resolved_warmup_steps = int(total_optimizer_steps * resolved_ratio)
-    resolved_warmup_steps = min(resolved_warmup_steps, total_optimizer_steps)
-
-    global_step = 0
-    best_val = float("inf")
-    best_epoch = 0
-    best_step = 0
-
-    early_cfg = cfg.get("early_stopping") or {}
-    try:
-        patience = int(early_cfg.get("patience", 0))
-    except (TypeError, ValueError):
-        patience = 0
-    try:
-        min_delta = float(early_cfg.get("min_delta", 0.0))
-    except (TypeError, ValueError):
-        min_delta = 0.0
-    min_delta = max(0.0, min_delta)
-    patience = max(0, patience)
-    epochs_since_improvement = 0
-
-    stop_training = False
-    overfit_one_batch = bool(cfg.get("overfit_one_batch", False))
-
-    wandb_cfg = cfg.get("wandb") or {}
-    watch_model = bool(wandb_cfg.get("watch", False))
-    wandb_logger = getattr(wandb_run, "log", None) if wandb_run is not None else None
-
-    if watch_model and wandb_module is not None and wandb_run is not None:
-        try:
-            wandb_module.watch(model)
-        except Exception as exc:
-            tqdm.write(f"[wandb] watch() failed: {exc}")
-
-    scheduler_status = (
-        f"[scheduler] using '{scheduler_name}'"
-        f" (total_steps={total_optimizer_steps}, warmup_steps={resolved_warmup_steps},"
-        f" min_lr_ratio={min_lr_ratio:.3f})"
-    )
-    tqdm.write(scheduler_status)
-    if wandb_logger is not None:
-        try:
-            wandb_logger({"scheduler/name": scheduler_name}, step=0)
-        except Exception as exc:
-            tqdm.write(f"[wandb] log() failed: {exc}")
-
-    try:
-        for epoch in range(num_epochs):
-            model.train()
-            opt.zero_grad(set_to_none=True)
-            running_loss = 0.0
-            epoch_bar = tqdm(
-                enumerate(train_dl, start=1),
-                total=steps_per_epoch,
-                desc=f"epoch {epoch + 1}/{num_epochs}",
-                leave=False,
-            )
-
-            for batch_idx, batch in epoch_bar:
-                inp = batch["input_ids"].to(device, non_blocking=True)
-                att = batch["attention_mask"].to(device, non_blocking=True)
-                lab = batch["labels"].to(device, non_blocking=True)
-                extra = {}
-                if "mask_positions" in batch:
-                    extra["mask_positions"] = batch["mask_positions"].to(device, non_blocking=True)
-                if "mask_lengths" in batch:
-                    extra["mask_lengths"] = batch["mask_lengths"].to(device, non_blocking=True)
-
-                with autocast_ctx:
-                    out = model(inp, att, labels=lab, **extra)
-                    loss = out["loss"]
-
-                loss_to_backward = loss / grad_accum
-                if scaler is not None:
-                    scaler.scale(loss_to_backward).backward()
-                else:
-                    loss_to_backward.backward()
-
-                running_loss += loss.item()
-
-                perform_step = (batch_idx % grad_accum == 0) or (batch_idx == steps_per_epoch)
-                if perform_step:
-                    if scaler is not None:
-                        scaler.unscale_(opt)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-                    global_step += 1
-                    lr_scale = lr_scheduler(global_step)
-                    for pg in opt.param_groups:
-                        pg["lr"] = cfg["lr"] * lr_scale
-
-                    if scaler is not None:
-                        scaler.step(opt)
-                        scaler.update()
-                    else:
-                        opt.step()
-                    opt.zero_grad(set_to_none=True)
-
-                    if max_train_steps and global_step >= max_train_steps:
-                        stop_training = True
-
-                current_lr = opt.param_groups[0]["lr"]
-                avg_loss = running_loss / batch_idx
-                epoch_bar.set_postfix({
-                    "loss": f"{avg_loss:.3f}",
-                    "lr": f"{current_lr:.2e}",
-                    "step": global_step,
-                })
-
-                if perform_step and wandb_logger is not None:
-                    log_payload = {
-                        "train/loss": loss.item(),
-                        "train/loss_avg": avg_loss,
-                        "train/epoch": epoch + batch_idx / max(1, steps_per_epoch),
-                        "lr": current_lr,
-                        "global_step": global_step,
-                    }
-                    metrics = out.get("metrics") if isinstance(out, dict) else None
-                    if isinstance(metrics, dict):
-                        for name, value in metrics.items():
-                            if isinstance(value, (int, float)):
-                                log_payload[f"train/{name}"] = float(value)
-                    try:
-                        wandb_logger(log_payload, step=global_step)
-                    except Exception as exc:
-                        tqdm.write(f"[wandb] log() failed: {exc}")
-
-                if batch_idx >= steps_per_epoch or stop_training:
-                    break
-
-            epoch_bar.close()
-
-            train_subset_loss = None
-            train_subset_metrics = {}
-            if train_eval_dl is not None:
-                train_eval = evaluate(model, train_eval_dl, device, pad_id)
-                if isinstance(train_eval, dict):
-                    train_subset_loss = float(train_eval.get("loss", 0.0))
-                    train_subset_metrics = {
-                        name: value for name, value in train_eval.items() if name != "loss"
-                    }
-                else:
-                    train_subset_loss = float(train_eval)
-
-            val = evaluate(model, val_dl, device, pad_id)
-            if isinstance(val, dict):
-                val_loss = float(val.get("loss", 0.0))
-                extra_val_metrics = {
-                    name: value for name, value in val.items() if name != "loss"
+            # Log metrics to wandb
+            if self.wandb_run:
+                metrics_to_log = {
+                    "epoch": epoch,
+                    **{f"train/{k}": v for k, v in train_metrics.items()},
+                    **{f"val/{k}": v for k, v in val_metrics.items()},
+                    "learning_rate": self.optimizer.param_groups[0]["lr"],
                 }
-            else:
-                val_loss = float(val)
-                extra_val_metrics = {}
-            ckpt = {
-                "model": model.state_dict(),
-                "config": cfg,
-                "epoch": epoch + 1,
-                "global_step": global_step,
-                "val_loss": val_loss,
-                "optimizer": opt.state_dict(),
-            }
-            if scaler is not None:
-                ckpt["scaler"] = scaler.state_dict()
-            torch.save(ckpt, os.path.join(cfg["save_dir"], f"epoch{epoch + 1:03d}.pt"))
-            improved = val_loss < (best_val - min_delta)
-            if improved:
-                best_val = val_loss
-                best_epoch = epoch + 1
-                best_step = global_step
-                epochs_since_improvement = 0
-                torch.save(ckpt, os.path.join(cfg["save_dir"], "best.pt"))
-            else:
-                if not math.isinf(best_val):
-                    epochs_since_improvement += 1
+                self.wandb_run.log(metrics_to_log)
 
-            if wandb_logger is not None:
-                log_payload = {
-                    "val/loss": val_loss,
-                    "val/best_loss": best_val,
-                    "val/best_epoch": best_epoch,
-                    "early_stopping/epochs_since_improvement": epochs_since_improvement,
-                    "early_stopping/patience": patience,
-                    "early_stopping/triggered": bool(
-                        patience > 0 and epochs_since_improvement >= patience
-                    ),
-                }
-                if train_subset_loss is not None:
-                    log_payload["train_subset/loss"] = train_subset_loss
-                    for name, value in train_subset_metrics.items():
-                        if isinstance(value, (int, float)):
-                            log_payload[f"train_subset/{name}"] = float(value)
-                for name, value in extra_val_metrics.items():
-                    if isinstance(value, (int, float)):
-                        log_payload[f"val/{name}"] = float(value)
-                try:
-                    wandb_logger(log_payload, step=global_step)
-                except Exception as exc:
-                    tqdm.write(f"[wandb] log() failed: {exc}")
+            logger.info(f"Validation metrics: {val_metrics}")
 
-            model.train()
-            status_parts = []
-            if train_subset_loss is not None:
-                status_parts.append(f"train_subset loss: {train_subset_loss:.3f}")
-            status_parts.append(
-                f"val loss: {val_loss:.3f} | best: {best_val:.3f} @ step {best_step}"
-            )
-            status = f"[epoch {epoch + 1}] " + " | ".join(status_parts)
-            status += f" | no_improve={epochs_since_improvement}"
-            if patience > 0:
-                status += f"/{patience}"
-            tqdm.write(status)
-
-            if patience > 0 and epochs_since_improvement >= patience:
-                stop_training = True
-                tqdm.write(
-                    "[early-stopping] pazienza esaurita: training interrotto per mancato"
-                    " miglioramento."
-                )
-
-            if stop_training:
+            # Early stopping and checkpointing
+            current_score = val_metrics[self.es_metric]
+            if self._check_early_stopping(current_score):
+                logger.info("Early stopping triggered.")
                 break
 
+        logger.info(f"Training finished. Best score: {self.best_score:.4f}")
+        return {"best_score": self.best_score, "best_epoch": epoch - self.es_counter}
+
+    def _train_epoch(self, epoch: int) -> dict[str, float]:
+        """Performs one full training pass over the training data.
+
+        Returns:
+            A dictionary of average training metrics for the epoch.
+        """
+        self.model.train()
+        total_loss = 0.0
+        # Use a moving average for smoother loss reporting in tqdm
+        smoothing_factor = 0.98
+        smoothed_loss = 0.0
+        is_first_batch = True
+
+        pbar = tqdm(
+            self.train_loader,
+            desc=f"Training Epoch {epoch}",
+            leave=False,
+            dynamic_ncols=True,
+        )
+
+        for i, batch in enumerate(pbar):
+            batch = self._transfer_batch_to_device(batch)
+            step = (epoch - 1) * len(self.train_loader) + i
+
+            with autocast(enabled=self.use_amp):
+                outputs = self.model(**batch)
+                loss = outputs["loss"]
+                if loss is None:
+                    continue
+                loss = loss / self.grad_accum_steps
+
+            self.scaler.scale(loss).backward()
+
+            if (i + 1) % self.grad_accum_steps == 0:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad(set_to_none=True)
+
+            # Update progress bar with smoothed loss
+            loss_item = loss.item() * self.grad_accum_steps
+            total_loss += loss_item
+            if is_first_batch:
+                smoothed_loss = loss_item
+                is_first_batch = False
+            else:
+                smoothed_loss = (smoothing_factor * smoothed_loss) + (1 - smoothing_factor) * loss_item
+            
+            pbar.set_postfix({"loss": f"{smoothed_loss:.4f}"})
+
+            # Log to wandb periodically
+            if self.wandb_run and step % self.log_every_n_steps == 0:
+                log_data = {"train/step_loss": loss_item, "learning_rate": self.optimizer.param_groups[0]["lr"]}
+                if "metrics" in outputs and outputs["metrics"] is not None:
+                    for k, v in outputs["metrics"].items():
+                        log_data[f"train/{k}"] = v
+                self.wandb_run.log(log_data, step=step)
+
+        avg_loss = total_loss / len(self.train_loader)
+        return {"loss": avg_loss}
+
+    @torch.inference_mode()
+    def _validate_epoch(self) -> dict[str, float]:
+        """Performs one full validation pass.
+
+        Returns:
+            A dictionary of average validation metrics.
+        """
+        self.model.eval()
+        metrics_agg = defaultdict(float)
+        total_count = 0
+
+        pbar = tqdm(
+            self.val_loader,
+            desc="Validating",
+            leave=False,
+            dynamic_ncols=True,
+        )
+
+        for batch in pbar:
+            batch = self._transfer_batch_to_device(batch)
+            with autocast(enabled=self.use_amp):
+                outputs = self.model(**batch)
+
+            if outputs["loss"] is not None:
+                metrics_agg["loss"] += outputs["loss"].item() * len(batch["input_ids"])
+            
+            if "metrics" in outputs and outputs["metrics"] is not None:
+                for k, v in outputs["metrics"].items():
+                    metrics_agg[k] += v * len(batch["input_ids"])
+
+            total_count += len(batch["input_ids"])
+
+        # Average the metrics over the entire dataset
+        avg_metrics = {k: v / total_count for k, v in metrics_agg.items()}
+        return avg_metrics
+
+    def _check_early_stopping(self, current_score: float) -> bool:
+        """Checks if early stopping criteria are met and saves the best model.
+
+        Args:
+            current_score: The validation score from the current epoch.
+
+        Returns:
+            True if training should stop, False otherwise.
+        """
+        is_better = (current_score < self.best_score) if self.es_mode == "min" else (current_score > self.best_score)
+
+        if is_better:
+            self.best_score = current_score
+            self.es_counter = 0
+            logger.info(f"New best score: {self.best_score:.4f}. Saving model...")
+            torch.save(self.model.state_dict(), self.checkpoint_path)
+        else:
+            self.es_counter += 1
+            logger.info(f"No improvement. Early stopping counter: {self.es_counter}/{self.es_patience}")
+
+        return self.es_counter >= self.es_patience
+
+    def _transfer_batch_to_device(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Moves a batch of data to the configured device."""
         return {
-            "best_val": best_val,
-            "best_epoch": best_epoch,
-            "best_step": best_step,
-            "global_step": global_step,
+            k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
         }
-    finally:
-        if wandb_run is not None and wandb_module is not None:
-            try:
-                wandb_module.finish()
-            except Exception as exc:
-                tqdm.write(f"[wandb] finish() failed: {exc}")

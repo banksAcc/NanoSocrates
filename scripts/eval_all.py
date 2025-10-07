@@ -1,4 +1,4 @@
-"""Script CLI per eseguire la valutazione completa."""
+"""Script RUN per eseguire la valutazione completa."""
 from __future__ import annotations
 
 import argparse

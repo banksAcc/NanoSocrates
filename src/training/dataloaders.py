@@ -1,207 +1,269 @@
-from dataclasses import dataclass
-from typing import List, Optional
-import json, os, torch, re, random
-from torch.utils.data import Dataset, ConcatDataset 
+"""Dataloaders and collators for multitask training."""
 
-@dataclass
-class Example:
-    id: str
-    task: str
-    input: str
-    target: str
-    film: Optional[str] = None
+from __future__ import annotations
 
-def _infer_task(path: str, input_text: str) -> str:
-    # 1) prova a inferire dal nome file
-    p = os.path.basename(path).lower()
-    if "rdf2text" in p: return "rdf2text"
-    if "text2rdf" in p: return "text2rdf"
-    if "rdfcomp1" in p or "completion1" in p: return "rdfcomp1"
-    if "rdfcomp2" in p or "completion2" in p: return "rdfcomp2"
-    # 2) prova a inferire dai marker nel testo
-    # 2) prova a inferire dai marker nel testo
-    t = input_text or ""
-    if "<RDF2Text>" in t: return "rdf2text"
-    if "<Text2RDF>" in t: return "text2rdf"
-    if "<CONTINUERDF>" in t: return "rdfcomp2"
-    if "<MASK>" in t: return "rdfcomp1"
-    # 3) fallback generico
-    return "unknown"
+import random
+from collections import defaultdict
+from itertools import chain
+from typing import TYPE_CHECKING, Any, cast
 
-class JsonlSeq2Seq(Dataset):
-    _ENTITY_REGEX = re.compile(r"(dbr:|dbo:|dbc:|dbp:|http://|https://)\S+")
+import torch
+from torch.utils.data import DataLoader, Dataset, Sampler
 
-    def __init__(self, path: str, tokenizer, max_len: int = 256, *, enable_entity_spans: bool = False):
-        assert os.path.exists(path), f"Missing dataset: {path}"
-        self.path = path
+if TYPE_CHECKING:
+    from tokenizers import Tokenizer
+
+
+class MultiTaskSampler(Sampler[int]):
+    """A custom sampler for multitask learning.
+
+    This sampler ensures that each batch contains a mix of examples from
+    different tasks, according to specified ratios. It first groups the dataset
+    by task name and then, for each batch, samples a proportional number of
+    indices from each task group.
+
+    This approach helps maintain a stable and balanced training signal when
+    combining multiple objectives.
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        batch_size: int,
+        ratios: dict[str, float],
+        drop_last: bool = False,
+    ):
+        """Initializes the MultiTaskSampler.
+
+        Args:
+            dataset: A PyTorch Dataset where each item is a dictionary
+                containing a "task" key.
+            batch_size: The total number of samples per batch.
+            ratios: A dictionary mapping task names to their desired ratio
+                in each batch (e.g., {"task_a": 0.5, "task_b": 0.5}).
+            drop_last: If True, the sampler will drop the last batch if its size
+                is less than batch_size.
+        """
+        super().__init__(dataset)
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.ratios = ratios
+        self.drop_last = drop_last
+
+        # Group indices by task
+        self.indices_by_task = defaultdict(list)
+        for i, item in enumerate(cast(Any, self.dataset)):
+            self.indices_by_task[item["task"]].append(i)
+
+        self.num_samples = len(self.dataset)
+        self.task_names = list(self.ratios.keys())
+        
+        # Normalize ratios to sum to 1
+        total_ratio = sum(self.ratios.values())
+        self.task_ratios = {task: r / total_ratio for task, r in self.ratios.items()}
+
+    def __iter__(self):
+        # Shuffle indices within each task group at the start of each epoch
+        for task in self.indices_by_task:
+            random.shuffle(self.indices_by_task[task])
+
+        # Create iterators for each task's indices
+        task_iters = {task: iter(indices) for task, indices in self.indices_by_task.items()}
+        
+        num_batches = self.num_samples // self.batch_size
+        if not self.drop_last and self.num_samples % self.batch_size != 0:
+            num_batches += 1
+
+        for _ in range(num_batches):
+            batch_indices = []
+            for task_name, ratio in self.task_ratios.items():
+                num_task_samples = int(self.batch_size * ratio)
+                
+                # Fetch indices for the current task
+                task_samples = []
+                for _ in range(num_task_samples):
+                    try:
+                        task_samples.append(next(task_iters[task_name]))
+                    except StopIteration:
+                        # If a task runs out of examples, reshuffle and restart its iterator
+                        random.shuffle(self.indices_by_task[task_name])
+                        task_iters[task_name] = iter(self.indices_by_task[task_name])
+                        task_samples.append(next(task_iters[task_name]))
+                
+                batch_indices.extend(task_samples)
+            
+            # Handle rounding errors by filling up to batch_size
+            while len(batch_indices) < self.batch_size:
+                random_task = random.choice(self.task_names)
+                try:
+                    batch_indices.append(next(task_iters[random_task]))
+                except StopIteration:
+                    random.shuffle(self.indices_by_task[random_task])
+                    task_iters[random_task] = iter(self.indices_by_task[random_task])
+                    batch_indices.append(next(task_iters[random_task]))
+            
+            # Shuffle the final batch to mix tasks
+            random.shuffle(batch_indices)
+            yield from batch_indices
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+
+class MultiTaskCollator:
+    """Collator for creating and padding multi-task batches.
+
+    This class orchestrates the preparation of a batch by delegating to
+    task-specific helper functions. It handles the final padding of all tensor
+    fields to ensure they have consistent lengths within the batch.
+    """
+
+    def __init__(self, tokenizer: Tokenizer, max_length: int):
+        """Initializes the MultiTaskCollator.
+
+        Args:
+            tokenizer: The tokenizer instance.
+            max_length: The maximum sequence length for padding and truncation.
+        """
         self.tokenizer = tokenizer
-        self.max_len = max_len
-        self.enable_entity_spans = bool(enable_entity_spans)
-        self.items: List[Example] = []
-        with open(path, "r", encoding="utf-8") as f:
-            for i, line in enumerate(f):
-                r = json.loads(line)
-                # campi robusti
-                ex_id   = str(r.get("id") or r.get("film") or i)
-                ex_inp  = r.get("input", "")
-                ex_tgt  = r.get("target", "")
-                ex_task = r.get("task") or _infer_task(path, ex_inp)
-                ex_film = r.get("film")
-                self.items.append(Example(
-                    id=ex_id, task=ex_task, input=ex_inp, target=ex_tgt, film=ex_film
-                ))
+        self.max_length = max_length
+        self.pad_token_id = tokenizer.token_to_id("[PAD]")
 
-        # EOT opzionale
-        self.eot_id = self.tokenizer.token_to_id("<EOT>")
-        self.pad_id = self.tokenizer.pad_id
-        self.sot_id = self.tokenizer.token_to_id("<SOT>")
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
+        """Collates a list of features into a padded batch.
 
-    def __len__(self): return len(self.items)
+        Args:
+            features: A list of individual data points from the dataset.
 
-    def _find_subsequence(self, sequence: List[int], pattern: List[int], *, start: int = 0) -> Optional[int]:
-        if not pattern or not sequence:
-            return None
-        last = len(sequence) - len(pattern)
-        if last < start:
-            return None
-        for idx in range(start, last + 1):
-            if sequence[idx : idx + len(pattern)] == pattern:
-                return idx
-        return None
+        Returns:
+            A dictionary of padded tensors ready for the model.
+        """
+        prepared_features = []
+        for item in features:
+            task_handler = self._get_task_handler(item["task"])
+            prepared_features.append(task_handler(item))
 
-    def _compute_entity_spans(self, tokens: List[int], text: str) -> List[tuple[int, int]]:
-        if not self.enable_entity_spans:
-            return []
-        matches = list(self._ENTITY_REGEX.finditer(text))
-        if not matches:
-            return []
-        spans: List[tuple[int, int]] = []
-        offset = 1 if tokens and self.sot_id is not None and tokens[0] == self.sot_id else 0
-        cursor = 0
-        for match in matches:
-            entity = match.group(0)
-            ent_ids = self.tokenizer.encode(entity)
-            if not ent_ids:
+        # Collate fields from all prepared features
+        first = prepared_features[0]
+        batch = {}
+        for k in first.keys():
+            # Pad each field to the max length in the batch for that field
+            # The tokenizer's pad method is highly optimized for this.
+            field_values = [f[k] for f in prepared_features if k in f and f[k] is not None]
+            if not field_values:
                 continue
-            start = self._find_subsequence(tokens, ent_ids, start=cursor)
-            if start is None:
-                # riprova dall'inizio per essere tolleranti con entità ripetute
-                start = self._find_subsequence(tokens, ent_ids)
-                if start is None:
-                    continue
-            cursor = start + len(ent_ids)
-            start_for_loss = start - offset
-            if start_for_loss < 0:
-                continue
-            spans.append((start_for_loss, len(ent_ids)))
-        return spans
 
-    def __getitem__(self, idx):
-        ex = self.items[idx]
-        x_ids = self.tokenizer.encode(ex.input)[: self.max_len - 1]
+            # Convert to tensors before padding
+            if isinstance(field_values[0], list):
+                field_values = [torch.tensor(val, dtype=torch.long) for val in field_values]
+            
+            batch[k] = torch.nn.utils.rnn.pad_sequence(
+                field_values, batch_first=True, padding_value=self.pad_token_id
+            )
+        
+        # Ensure 'attention_mask' is created for the input
+        if "input_ids" in batch:
+            batch["attention_mask"] = (batch["input_ids"] != self.pad_token_id).long()
 
-        target_text = ex.target or ""
-        if ex.task == "rdfcomp1" and target_text and not target_text.strip().startswith("<SOT>"):
-            target_text = "<SOT> " + target_text.strip()
+        return batch
 
-        y_tokens = self.tokenizer.encode(target_text)[: self.max_len - 1]
-        spans = self._compute_entity_spans(y_tokens, target_text)
-        y_ids = list(y_tokens)
-        if self.eot_id is not None:
-            x_ids.append(self.eot_id)
-            y_ids.append(self.eot_id)
-        item = {
-            "input_ids": torch.tensor(x_ids, dtype=torch.long),
-            "labels": torch.tensor(y_ids, dtype=torch.long),
+    def _get_task_handler(self, task_name: str):
+        """Returns the appropriate data preparation function for a given task."""
+        if task_name == "Text2RDF":
+            return self._prepare_text2rdf
+        if task_name == "RDF2Text":
+            return self._prepare_rdf2text
+        if task_name == "RDFCompletion_Msk":
+            return self._prepare_rdf_completion_mask
+        if task_name == "RDFCompletion_Cont":
+            return self._prepare_rdf_completion_continue
+        raise ValueError(f"Unknown task name: {task_name}")
+
+    def _prepare_text2rdf(self, item: dict) -> dict:
+        """Prepares a Text-to-RDF example."""
+        # Input: text + task_token
+        # Target: rdf
+        return {
+            "input_ids": item["text_ids"] + item["task_ids"],
+            "labels": item["rdf_ids"],
         }
-        mask_positions = torch.tensor([s for s, _ in spans], dtype=torch.long)
-        mask_lengths = torch.tensor([l for _, l in spans], dtype=torch.long)
-        item["mask_positions"] = mask_positions
-        item["mask_lengths"] = mask_lengths
-        return item
+        
+    def _prepare_rdf2text(self, item: dict) -> dict:
+        """Prepares an RDF-to-Text example."""
+        # Input: rdf + task_token
+        # Target: text
+        return {
+            "input_ids": item["rdf_ids"] + item["task_ids"],
+            "labels": item["text_ids"],
+        }
 
-def pad_collate(batch, pad_id: int):
-    def _pad(seqs):
-        max_len = max(len(s) for s in seqs)
-        out = torch.full((len(seqs), max_len), pad_id, dtype=torch.long)
-        for i, s in enumerate(seqs):
-            out[i, : len(s)] = s
-        return out
+    def _prepare_rdf_completion_mask(self, item: dict) -> dict:
+        """Prepares an RDF masked slot prediction example."""
+        # Input: rdf_with_mask + task_token
+        # Target: masked span (in 'labels'), rest is padded
+        
+        input_ids = item["rdf_masked_ids"] + item["task_ids"]
+        labels = torch.full((len(input_ids),), self.pad_token_id, dtype=torch.long)
+        
+        # The true label is just the masked span
+        target_span = torch.tensor(item["rdf_masked_span_ids"], dtype=torch.long)
+        
+        return {
+            "input_ids": input_ids,
+            "labels": target_span,
+            "mask_positions": torch.tensor([item["mask_start_pos"]], dtype=torch.long),
+            "mask_lengths": torch.tensor([len(target_span)], dtype=torch.long),
+        }
 
-    x = _pad([b["input_ids"] for b in batch])
-    y = _pad([b["labels"] for b in batch])
-    attn = (x != pad_id)            # <-- bool
-    mask_pos_list = [b.get("mask_positions", torch.empty(0, dtype=torch.long)) for b in batch]
-    mask_len_list = [b.get("mask_lengths", torch.empty(0, dtype=torch.long)) for b in batch]
+    def _prepare_rdf_completion_continue(self, item: dict) -> dict:
+        """Prepares an RDF continuation example."""
+        # Input: partial_rdf + task_token
+        # Target: remaining_rdf
+        return {
+            "input_ids": item["rdf_context_ids"] + item["task_ids"],
+            "labels": item["rdf_continuation_ids"],
+        }
 
-    max_spans = max((len(t) for t in mask_pos_list), default=0)
-    if max_spans > 0:
-        mask_positions = torch.full((len(batch), max_spans), -1, dtype=torch.long)
-        mask_lengths = torch.zeros((len(batch), max_spans), dtype=torch.long)
-        mask_valid = torch.zeros((len(batch), max_spans), dtype=torch.bool)
-        for i, (pos, leng) in enumerate(zip(mask_pos_list, mask_len_list)):
-            n = len(pos)
-            if n == 0:
-                continue
-            mask_positions[i, : n] = pos
-            mask_lengths[i, : n] = leng
-            mask_valid[i, : n] = True
+
+def create_multitask_dataloader(
+    dataset: Dataset,
+    batch_size: int,
+    tokenizer: Tokenizer,
+    max_length: int,
+    ratios: dict[str, float],
+    num_workers: int = 0,
+    shuffle: bool = True,
+) -> DataLoader:
+    """Creates a DataLoader for multi-task training.
+
+    Args:
+        dataset: The dataset containing examples for all tasks.
+        batch_size: The target batch size.
+        tokenizer: The tokenizer for creating the collator.
+        max_length: Maximum sequence length.
+        ratios: Dictionary of task ratios for sampling.
+        num_workers: Number of worker processes for data loading.
+        shuffle: Whether to shuffle the data. If True, MultiTaskSampler is used.
+
+    Returns:
+        A configured PyTorch DataLoader.
+    """
+    collator = MultiTaskCollator(tokenizer, max_length)
+    
+    if shuffle:
+        sampler = MultiTaskSampler(dataset, batch_size, ratios, drop_last=True)
+        return DataLoader(
+            dataset,
+            batch_sampler=sampler,
+            collate_fn=collator,
+            num_workers=num_workers,
+        )
     else:
-        mask_positions = torch.empty((len(batch), 0), dtype=torch.long)
-        mask_lengths = torch.empty((len(batch), 0), dtype=torch.long)
-        mask_valid = torch.empty((len(batch), 0), dtype=torch.bool)
-
-    return {
-        "input_ids": x,
-        "attention_mask": attn,
-        "labels": y,
-        "mask_positions": mask_positions,
-        "mask_lengths": mask_lengths,
-        "mask_valid": mask_valid,
-    }
-
-#x la parte del multitask
-class MultiTaskRandomDataset(Dataset):
-    """
-    Dataset stocastico: ad ogni __getitem__ ignora 'i' e
-    pesca un task secondo i pesi, poi un esempio random in quel task.
-    Così un 'epoch' è stocastico, ma è pratico e veloce.
-    """
-    def __init__(self, datasets_with_weights):
-        """
-        datasets_with_weights: List[ (JsonlSeq2Seq, weight:int) ]
-        """
-        self.ds = [d for d, w in datasets_with_weights]
-        self.w  = [max(0.0, float(w)) for d, w in datasets_with_weights]
-        sw = sum(self.w)
-        assert sw > 0, "MultiTaskRandomDataset: somma pesi nulla."
-        # cum prob
-        acc, cum = [], 0.0
-        for wi in self.w:
-            cum += wi / sw
-            acc.append(cum)
-        self.cum = acc
-        # lunghezza 'nominale': somma delle lunghezze (va bene per avere ~epoch size)
-        self._len = sum(len(d) for d in self.ds)
-
-    def __len__(self): return self._len
-
-    def _pick_dataset(self):
-        r = random.random()
-        for i, c in enumerate(self.cum):
-            if r <= c: return self.ds[i]
-        return self.ds[-1]
-
-    def __getitem__(self, i):
-        d = self._pick_dataset()
-        j = random.randrange(len(d))
-        return d[j]
-
-def build_multitask_train(dsets, weights):
-    assert len(dsets) == len(weights)
-    pairs = list(zip(dsets, weights))
-    return MultiTaskRandomDataset(pairs)
-
-def build_concat_val(dsets):
-    # validazione: concatenazione di tutte le val per una loss media
-    return ConcatDataset(dsets)
+        # For validation/testing, no special sampler is needed
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            collate_fn=collator,
+            num_workers=num_workers,
+            shuffle=False,
+        )
