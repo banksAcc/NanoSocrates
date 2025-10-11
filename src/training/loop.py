@@ -115,9 +115,8 @@ class TrainingLoop:
                 # Older PyTorch versions expect the legacy signature without the
                 # device argument. Fall back gracefully so training still works.
                 self.scaler = amp.GradScaler(enabled=True)
-
         self.model.to(self.device)
-
+        
     def run(self, num_epochs: int) -> dict[str, Any]:
         """Starts and manages the training process for a given number of epochs.
 
@@ -192,8 +191,7 @@ class TrainingLoop:
         for i, batch in enumerate(pbar):
             batch = self._transfer_batch_to_device(batch)
             model_inputs = self._prepare_model_inputs(batch)
-            step = (epoch - 1) * self._train_loader_len + i
-
+            step = (epoch - 1) * self._train_loader_len + i  
             with amp.autocast(**self.autocast_kwargs):
                 outputs = self.model(**model_inputs)
                 loss = outputs["loss"]
