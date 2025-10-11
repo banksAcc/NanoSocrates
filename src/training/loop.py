@@ -108,7 +108,7 @@ class TrainingLoop:
 
         self.scaler = None
         if self.use_amp:
-          try:
+            try:
                 self.scaler = amp.GradScaler(device=self.device.type, enabled=True)
             except TypeError:
                 # Older PyTorch versions expect the legacy signature without the

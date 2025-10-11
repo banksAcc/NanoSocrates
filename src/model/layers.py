@@ -726,6 +726,7 @@ class T5Attention(nn.Module):
         *,
         key_value_states: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
         position_bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Performs the T5 attention forward pass.
@@ -734,6 +735,8 @@ class T5Attention(nn.Module):
             hidden_states: Input tensor. Shape: (batch, seq_len, d_model)
             key_value_states: Optional key/value states for cross-attention.
             key_padding_mask: Mask for padding tokens.
+            attn_mask: Boolean mask applied to attention logits. True values
+                indicate positions that should be masked out.
             position_bias: Pre-computed position bias tensor.
 
         Returns:
@@ -758,6 +761,18 @@ class T5Attention(nn.Module):
             )
         if position_bias is not None:
             scores += position_bias
+
+        if attn_mask is not None:
+            if attn_mask.dtype != torch.bool:
+                raise TypeError("attn_mask must be a boolean tensor for T5Attention")
+            if attn_mask.dim() == 2:
+                attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)
+            elif attn_mask.dim() == 3:
+                attn_mask = attn_mask.unsqueeze(1)
+            attn_mask = attn_mask.to(device=scores.device)
+            if attn_mask.size(-2) != scores.size(-2) or attn_mask.size(-1) != scores.size(-1):
+                raise ValueError("attn_mask must broadcast to (batch, heads, q_len, k_len)")
+            scores = scores.masked_fill(attn_mask, torch.finfo(scores.dtype).min)
 
         if key_padding_mask is not None:
             mask = key_padding_mask.unsqueeze(1).unsqueeze(2) # (B, 1, 1, K_len)
@@ -854,11 +869,16 @@ class T5DecoderLayer(nn.Module):
         memory: torch.Tensor,
         *,
         self_key_padding_mask: Optional[torch.Tensor] = None,
+        self_attn_mask: Optional[torch.Tensor] = None,
         cross_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         # Masked Self-Attention (Pre-LN)
         normed = self.norm1(hidden_states)
-        self_attn_out = self.self_attn(normed, key_padding_mask=self_key_padding_mask)
+        self_attn_out = self.self_attn(
+            normed,
+            key_padding_mask=self_key_padding_mask,
+            attn_mask=self_attn_mask,
+        )
         x = hidden_states + self.dropout(self_attn_out)
 
         # Cross-Attention (Pre-LN)
@@ -940,6 +960,7 @@ class T5Transformer(nn.Module):
         memory: torch.Tensor,
         *,
         self_key_padding_mask: Optional[torch.Tensor] = None,
+        self_attn_mask: Optional[torch.Tensor] = None,
         cross_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         output = tgt
@@ -947,6 +968,7 @@ class T5Transformer(nn.Module):
             output = layer(
                 output, memory,
                 self_key_padding_mask=self_key_padding_mask,
+                self_attn_mask=self_attn_mask,
                 cross_key_padding_mask=cross_key_padding_mask
             )
         # Final LayerNorm after the stack
