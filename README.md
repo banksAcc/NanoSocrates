@@ -17,7 +17,7 @@ nanosocrates/
 │  │  ├─ toy.yaml                # remapping verso data/processed/toy
 │  │  └─ wikipedia.yaml          # API REST, lingua, timeout
 │  ├─ eval/
-│  │  └─ baseline.yaml           # esempio completo di valutazione
+│  │  └─ multitask_default.yaml # preset di valutazione multitask (alias-driven)
 │  ├─ tokenizer/
 │  │  └─ bpe_default.yaml            # addestramento tokenizer + token speciali
 │  └─ train/
@@ -91,8 +91,10 @@ pip install -r requirements.txt
    ```
 5. **Valuta il checkpoint** (report JSON + metriche aggregate)
    ```bash
-   python -m src.run evaluate --cfg configs/eval/baseline.yaml --output reports/baseline_eval.json
-   # legacy wrapper → python -m scripts.eval_all --cfg configs/eval/baseline.yaml
+   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml \
+       --override checkpoint=checkpoints/multitask_default/best.pt \
+       --output reports/multitask_default_eval.json
+   # legacy wrapper → python -m scripts.eval_all --cfg configs/eval/multitask_default.yaml
    ```
 
 ### 2.3 Tutorial — sottoinsieme toy (20 film)
@@ -106,7 +108,7 @@ pip install -r requirements.txt
 3. Esegui training e valutazione puntando ai nuovi file con il flag `--toy`:
    ```bash
    python -m src.run train --cfg configs/train/multitask_default.yaml --toy
-   python -m scripts.eval_all --cfg configs/eval/baseline.yaml --toy
+   python -m scripts.eval_all --cfg configs/eval/multitask_default.yaml --toy
    ```
 
 ### 2.4 Tutorial — sanity check (overfit di un batch)
@@ -146,14 +148,17 @@ pip install -r requirements.txt
    fallisce viene eseguito automaticamente il fallback in modalità offline.
 2. Per loggare anche la valutazione usa lo stesso approccio:
    ```bash
-   python -m src.run evaluate --cfg configs/eval/baseline.yaml --override \
-       wandb.mode=online wandb.project=nanosocrates-demo --output reports/baseline_eval.json
+   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override \
+       checkpoint=checkpoints/multitask_default/best.pt \
+       wandb.mode=online wandb.project=nanosocrates-demo --output reports/multitask_default_eval.json
    ```
    Le metriche vengono appiattite tramite `src.utils.wandb_utils.flatten_eval_metrics`
    e inviate come singolo step alla run già configurata.
 3. Per eseguire la valutazione dal RUN unificato mantenendo gli override:
    ```bash
-   python -m src.run evaluate --cfg configs/eval/baseline.yaml --override wandb.mode=online wandb.project=nanosocrates-demo --output reports/baseline_eval.json
+   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override \
+       checkpoint=checkpoints/multitask_default/best.pt \
+       wandb.mode=online wandb.project=nanosocrates-demo --output reports/multitask_default_eval.json
    ```
 
 ---
@@ -264,18 +269,26 @@ per gli split `val`/`test` e aggrega i risultati per task.
 
 ### 8.1 Configurazione & script
 
-Il file `configs/eval/baseline.yaml` mostra un esempio completo di configurazione
-con percorsi `val`/`test` per ciascun task, parametri di decoding e destinazione
-del report JSON. Per eseguire una valutazione completa:
+Il file `configs/eval/multitask_default.yaml` mostra un esempio completo di
+configurazione con percorsi `val`/`test` per ciascun task, parametri di decoding
+e destinazione del report JSON. Il campo `checkpoint` è impostato sul
+segnaposto `<<override-me>>`: indica agli script di passare il path corretto via
+`--override` (o di risolverlo tramite l'alias dichiarato in `model_alias`).
+Per eseguire una valutazione completa sul mix multitask T5:
 
 ```bash
-python -m src.run evaluate --cfg configs/eval/baseline.yaml --output reports/eval.json
+python -m src.run evaluate --cfg configs/eval/multitask_default.yaml \
+    --override checkpoint=checkpoints/multitask_default/best.pt --output reports/eval.json
 ```
 
 Il comando genera un report strutturato (stampato a terminale e salvato su disco)
 ed effettua l'eventuale logging su Weights & Biases se abilitato nel config.
 Per retrocompatibilità rimane disponibile anche `python -m scripts.eval_all`,
-che reindirizza automaticamente verso il subcomando `evaluate`.
+che reindirizza automaticamente verso il subcomando `evaluate` e sfrutta
+`model_alias` per impostare l'override se non già specificato. Usa
+`--model-alias rope_on` per puntare al checkpoint RoPE (`checkpoints/rope_on/best.pt`).
+Gli alias predefiniti includono anche `mix` (sinonimo di `multitask_default`) e
+`baseline` per il vecchio encoder–decoder sinusoidale.
 
 ### 8.2 Inference manuale
 
@@ -283,9 +296,9 @@ Per testare rapidamente il modello su un input specifico puoi usare il
 subcomando `predict` oppure lo script di esempio `scripts/predict_example.py`:
 
 ```bash
-python -m src.run predict --checkpoint checkpoints/baseline/best.pt --tokenizer data/vocab/bpe.json --task text2rdf --input "Plot ..."
+python -m src.run predict --checkpoint checkpoints/multitask_default/best.pt --tokenizer data/vocab/bpe.json --task text2rdf --input "Plot ..."
 
-python -m scripts.predict_example --checkpoint checkpoints/baseline/best.pt --tokenizer data/vocab/bpe.json --task rdf2text --input "<SOT> ... <RDF2Text>"
+python -m scripts.predict_example --checkpoint checkpoints/multitask_default/best.pt --tokenizer data/vocab/bpe.json --task rdf2text --input "<SOT> ... <RDF2Text>"
 ```
 
 Il flag `--task` aggiunge automaticamente il marker speciale previsto dal
@@ -368,6 +381,7 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 ### 12.5 Config valutazione (`configs/eval/*.yaml`)
 
 - `checkpoint`, `tokenizer_file`, `device`: cosa caricare e dove inferire.
+- `model_alias`: mapping rapido verso i checkpoint salvati (`mix`, `rope_on`, ...).
 - `batch_size`, `num_workers`: throughput inferenza.
 - `decoding.max_new_tokens`: limite della generazione autoregressiva.
 - `enable_entity_spans`: calcola metriche MASK se il checkpoint le supporta.

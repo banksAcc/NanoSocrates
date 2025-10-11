@@ -25,6 +25,7 @@ from src.utils.config import (
     apply_overrides,
     apply_toy_paths,
     load_yaml,
+    resolve_checkpoint_reference,
 )
 from src.utils.wandb_utils import flatten_eval_metrics, maybe_init_wandb
 
@@ -108,6 +109,7 @@ def _prepare_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg = apply_toy_paths(cfg)
         LOGGER.info("[toy] uso i dataset compatti in data/processed/toy")
     cfg = apply_overrides(cfg, args.override)
+    cfg = resolve_checkpoint_reference(cfg)
     return cfg
 
 

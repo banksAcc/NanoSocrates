@@ -1,10 +1,12 @@
-checkpoint: "checkpoints/baseline/best.pt"
+model_alias: "multitask_default"
+checkpoint: "<<override-me>>"  # usa --override checkpoint=... oppure aggiorna CHECKPOINT_ALIASES
+
 tokenizer_file: "data/vocab/bpe.json"
 max_len: 256
 batch_size: 8
 num_workers: 2
 device: "cuda"
-output_json: "reports/baseline_eval.json"
+output_json: "reports/multitask_default_eval.json"
 
 decoding:
   max_new_tokens: 160
