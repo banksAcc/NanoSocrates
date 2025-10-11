@@ -21,8 +21,8 @@ nanosocrates/
 │  ├─ tokenizer/
 │  │  └─ bpe_default.yaml            # addestramento tokenizer + token speciali
 │  └─ train/
-│     ├─ baseline.yaml           # modello standard 3e+3d
-│     ├─ mix_3322.yaml           # mixing alternativo per i task
+│     ├─ baseline.yaml           # encoder-decoder vanilla (sinusoidale)
+│     ├─ multitask_default.yaml  # preset multitask T5 3:3:2:2
 │     └─ rope_on.yaml            # variante con Rotary Positional Embeddings
 ├─ data/                         # directory popolata dagli script (raw/interim/processed/vocab)
 ├─ scripts/
@@ -87,7 +87,7 @@ pip install -r requirements.txt
    ```
 4. **Avvia il training**
    ```bash
-   python -m src.run train --cfg configs/train/baseline.yaml
+   python -m src.run train --cfg configs/train/multitask_default.yaml
    ```
 5. **Valuta il checkpoint** (report JSON + metriche aggregate)
    ```bash
@@ -105,21 +105,21 @@ pip install -r requirements.txt
    ```
 3. Esegui training e valutazione puntando ai nuovi file con il flag `--toy`:
    ```bash
-   python -m src.run train --cfg configs/train/baseline.yaml --toy
-   python -m src.run evaluate --cfg configs/eval/baseline.yaml --toy --output reports/baseline_toy_eval.json
+   python -m src.run train --cfg configs/train/multitask_default.yaml --toy
+   python -m scripts.eval_all --cfg configs/eval/baseline.yaml --toy
    ```
 
 ### 2.4 Tutorial — sanity check (overfit di un batch)
 
 1. Riusa la configurazione standard e forza gli override automatici:
    ```bash
-   python -m src.run overfit --cfg configs/train/baseline.yaml --toy
+   python -m src.run overfit --cfg configs/train/multitask_default.yaml --toy
    ```
    Il comando abilita `overfit_one_batch=true`, disattiva l'early stopping e,
    per impostazione predefinita, esegue 200 aggiornamenti consecutivi sullo
    stesso batch.
    - Il numero di esempi nel batch coincide con `batch_size` del config (16 nel
-     preset `configs/train/mix_3322.yaml`). Se vuoi restringerlo, passa
+     preset `configs/train/multitask_default.yaml`). Se vuoi restringerlo, passa
      `--override batch_size=4` o modifica il valore nel YAML.
    - Usa `--steps N` per cambiare il numero di ottimizzazioni (es. `--steps 400`).
    - In alternativa `--epochs M` forza il numero di epoche (una per aggiornamento
@@ -127,7 +127,7 @@ pip install -r requirements.txt
      Qualsiasi ulteriore `--override` passato da RUN viene rispettato.
 2. In alternativa esiste lo script dedicato:
    ```bash
-   python -m scripts.sanity_overfit --cfg configs/train/baseline.yaml --toy
+   python -m scripts.sanity_overfit --cfg configs/train/multitask_default.yaml --toy
    ```
 3. Verifica che la loss scenda rapidamente verso ~0: conferma che tokenizer,
    dataloader, loop di training e logging siano correttamente collegati.
@@ -136,7 +136,7 @@ pip install -r requirements.txt
 
 1. Modifica il config (o usa gli override) per abilitare W&B.
    ```bash
-   python -m src.run train --cfg configs/train/baseline.yaml --override wandb.mode=online wandb.project=nanosocrates-demo wandb.run_name=debug
+   python -m src.run train --cfg configs/train/multitask_default.yaml --override wandb.mode=online wandb.project=nanosocrates-demo wandb.run_name=debug
    ```
    I campi supportati sono `mode` (`online`, `offline`, `disabled`), `project`,
    `entity`, `run_name`, `tags` (lista) e `watch` (bool). Se non specifichi
@@ -215,12 +215,13 @@ Addestra **BPE 24k** su (testo + RDF linearizzato) con i token speciali. Artefat
 ## 6) Modello & Training (Step 5–6)
 
 Il modello di riferimento è `TinySeq2Seq` con **3 encoder layer + 3 decoder layer**
-(`d_model=384`, `nhead=6`, `ff_dim=1536`, dropout `0.1`). Il training baseline
-(`configs/train/baseline.yaml`) usa AdamW con scheduler cosine + warmup e opera
-su un singolo task (Text2RDF). Per allenare sui quattro task insieme utilizza
-`configs/train/mix_3322.yaml`, che imposta il mixing **3:3:2:2** su
-Text2RDF/RDF2Text/RDFComp1/RDFComp2. Gli script di sanity (`src.run overfit` o
-`scripts/sanity_overfit.py`) permettono di validare rapidamente la pipeline.
+(`d_model=384`, `nhead=6`, `ff_dim=1536`, dropout `0.1`). Il preset di default
+(`configs/train/multitask_default.yaml`) addestra un T5 compatto sui quattro task
+Text2RDF/RDF2Text/RDFComp1/RDFComp2 con mixing **3:3:2:2**. Le varianti
+`baseline.yaml` e `rope_on.yaml` riusano lo stesso schedule multitask rispettivamente
+con posizioni sinusoidali e RoPE per facilitare le ablation. Gli script di sanity
+(`src.run overfit` o `scripts/sanity_overfit.py`) permettono di validare rapidamente
+la pipeline.
 
 ### 6.1 Varianti posizionali/attenzione
 
@@ -236,8 +237,8 @@ varianti architetturali del `TinySeq2Seq`:
 - `interleave_ratio`: coefficiente (0.0–1.0) che controlla quanto del risultato
   dell'attenzione derivi dal ramo MLA (1.0 = solo MLA, 0.5 = mix paritetico).
 
-Gli esempi pronti (`baseline.yaml`, `rope_on.yaml`, `mix_3322.yaml`) mostrano
-come attivare/ disattivare i flag per le ablation.
+Gli esempi pronti (`multitask_default.yaml`, `baseline.yaml`, `rope_on.yaml`)
+mostrano come attivare/disattivare i flag per le ablation.
 
 ---
 
@@ -296,7 +297,8 @@ dataset se non già presente nell'input.
 
 - **Positional**: sinusoidale (`baseline.yaml`) vs **RoPE** (`rope_on.yaml`)
 - **Attention**: standard vs **MLA** (abilita `use_mla` e calibra `interleave_ratio`)
-- **Mixing**: single-task (`baseline.yaml`) vs multi-task **3:3:2:2** (`mix_3322.yaml`)
+- **Architecture**: T5 (`multitask_default.yaml`) vs encoder-decoder vanilla (`baseline.yaml`)
+  mantenendo il mixing multitask **3:3:2:2**.
   Metriche: ROUGE-L, F1 triple, Accuracy Comp-1, costo/epoch.
 
 Esegui i test rapidi sulle varianti con:
@@ -348,7 +350,7 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 
 | Chiave                    | Descrizione              | Note                                                  |
 | ------------------------- | ------------------------ | ----------------------------------------------------- |
-| `train_file` / `val_file` | Path singolo task        | Usati nei preset baseline                             |
+| `train_file` / `val_file` | Path singolo task        | Utili per esperimenti single-task o debug mirati      |
 | `datasets`                | Lista task con pesi      | `weight` guida il sampler proporzionale (es. 3:3:2:2) |
 | `max_len`                 | Troncamento input/target | Deve corrispondere al valore del tokenizer            |
 | Flag RUN `--toy`          | Dataset rapido           | Applica automaticamente `configs/data/toy.yaml`       |
