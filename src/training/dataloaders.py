@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import random
 from collections import Counter, defaultdict
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Mapping, Sequence
 
 import torch
 from torch.utils.data import DataLoader, Dataset, Sampler
@@ -96,12 +96,74 @@ def _truncate(sequence: List[int], max_len: int) -> List[int]:
     return sequence[:max_len]
 
 
+def _normalise_span_payload(spans: Any) -> List[tuple[int, int]]:
+    """Converts heterogeneous span annotations into (start, length) tuples."""
+
+    normalised: List[tuple[int, int]] = []
+
+    if not spans:
+        return normalised
+
+    if isinstance(spans, Mapping):
+        positions = spans.get("positions") or spans.get("starts")
+        lengths = spans.get("lengths") or spans.get("span_lengths")
+        if positions and lengths:
+            for pos, length in zip(positions, lengths):
+                try:
+                    normalised.append((int(pos), max(0, int(length))))
+                except (TypeError, ValueError):
+                    continue
+            return normalised
+
+    for span in spans if isinstance(spans, Iterable) else []:
+        if isinstance(span, Mapping):
+            start = span.get("start") or span.get("position") or span.get("idx")
+            end = span.get("end")
+            length = span.get("length") or span.get("span_length")
+            if start is None:
+                continue
+            try:
+                start_i = int(start)
+            except (TypeError, ValueError):
+                continue
+            if length is None and end is not None:
+                try:
+                    length = int(end) - start_i
+                except (TypeError, ValueError):
+                    length = None
+            try:
+                length_i = int(length) if length is not None else 0
+            except (TypeError, ValueError):
+                continue
+            normalised.append((start_i, max(0, length_i)))
+        elif isinstance(span, (list, tuple)) and span:
+            try:
+                start_i = int(span[0])
+            except (TypeError, ValueError):
+                continue
+            length_i = None
+            if len(span) >= 2:
+                try:
+                    length_i = int(span[1])
+                except (TypeError, ValueError):
+                    length_i = None
+            if length_i is None and len(span) >= 3:
+                try:
+                    length_i = int(span[2]) - start_i
+                except (TypeError, ValueError):
+                    length_i = None
+            normalised.append((start_i, max(0, length_i or 0)))
+
+    return normalised
+
+
 def _iter_examples(
     path: str,
     tokenizer: Any,
     *,
     max_len: int,
     task_hint: str | None = None,
+    enable_entity_spans: bool = False,
 ) -> Iterator[Seq2SeqExample]:
     """Yields tokenised examples from a JSONL file."""
 
@@ -118,6 +180,39 @@ def _iter_examples(
         input_ids = _truncate(_encode(tokenizer, source), max_len)
         label_ids = _truncate(_encode(tokenizer, target), max_len)
 
+        mask_positions: List[int] | None = None
+        mask_lengths: List[int] | None = None
+        if enable_entity_spans:
+            raw_spans = (
+                record.get("entity_spans")
+                or record.get("mask_spans")
+                or record.get("mask_positions")
+            )
+            spans = _normalise_span_payload(raw_spans)
+            if not spans and "<mask>" in source.lower():
+                spans = [(0, len(label_ids))] if label_ids else []
+
+            if spans:
+                valid_positions: List[int] = []
+                valid_lengths: List[int] = []
+                seq_len = len(label_ids)
+                for start, length in spans:
+                    if length <= 0:
+                        continue
+                    if start < 0:
+                        start = 0
+                    if start >= seq_len:
+                        continue
+                    end = min(seq_len, start + length)
+                    length = max(0, end - start)
+                    if length == 0:
+                        continue
+                    valid_positions.append(int(start))
+                    valid_lengths.append(int(length))
+                if valid_positions:
+                    mask_positions = valid_positions
+                    mask_lengths = valid_lengths
+
         yield Seq2SeqExample(
             input_text=source,
             target_text=target,
@@ -125,6 +220,8 @@ def _iter_examples(
             film=film,
             input_ids=input_ids,
             label_ids=label_ids,
+            mask_positions=mask_positions,
+            mask_lengths=mask_lengths,
         )
 
 
@@ -181,12 +278,19 @@ class JsonlSeq2Seq(MultiTaskDataset):
         *,
         max_len: int,
         task: str | None = None,
+        enable_entity_spans: bool = False,
     ) -> None:
         self.path = str(path)
         self.max_len = int(max_len)
         self.pad_id = _get_pad_id(tokenizer)
         items = list(
-            _iter_examples(self.path, tokenizer, max_len=self.max_len, task_hint=task)
+            _iter_examples(
+                self.path,
+                tokenizer,
+                max_len=self.max_len,
+                task_hint=task,
+                enable_entity_spans=enable_entity_spans,
+            )
         )
         super().__init__(items)
 
