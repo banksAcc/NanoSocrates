@@ -200,6 +200,12 @@ class TrainingLoop:
 
         Returns:
             A dictionary of average training metrics for the epoch.
+
+        Note:
+            Gradient accumulation may leave residual gradients if the number of
+            batches in an epoch is not an exact multiple of
+            :attr:`grad_accum_steps`. Any pending gradients are explicitly
+            flushed at the end of the epoch to ensure no progress is lost.
         """
         self.model.train()
         total_loss = 0.0
@@ -268,6 +274,17 @@ class TrainingLoop:
         if num_batches == 0:
             logger.warning("Training DataLoader produced no batches; returning empty metrics.")
             return {}
+
+        # Flush any remaining gradients that did not trigger during the main loop
+        # due to gradient accumulation boundaries. This keeps the effective number
+        # of optimizer steps in sync with ceil(num_batches / grad_accum_steps).
+        if num_batches % self.grad_accum_steps != 0:
+            if self.use_amp:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
 
         avg_loss = total_loss / num_batches
         return {"loss": avg_loss}
