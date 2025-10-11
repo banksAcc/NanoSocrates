@@ -1,4 +1,9 @@
-"""Esempio minimale di inference da riga di comando."""
+"""Script CLI minimale per verificare una singola predizione.
+
+Preferisco tenerlo perché mi consente di testare rapidamente checkpoint e
+tokenizer senza avviare l'intera pipeline di valutazione.
+"""
+
 from __future__ import annotations
 
 import argparse

@@ -10,15 +10,15 @@ python scripts/fetch_wikipedia.py --config configs/data/wikipedia.yaml --in data
 python scripts/build_dataset.py --config configs/data/build.yaml --dbp data/raw/dbpedia_triples.jsonl --wiki data/raw/wikipedia_intro.jsonl --outdir data/processed
 
 
-python scripts/train_tokenizer.py --config configs/tokenizer/bpe_24k.yaml \
+python scripts/train_tokenizer.py --config configs/tokenizer/bpe_default.yaml \
   --inputs data/processed/text2rdf.train.jsonl data/processed/rdf2text.train.jsonl \
   --outdir data/vocab
 
  TEST tokenizer 
 
  1) Tokenizer BPE (usa i file emessi da --emit_tasks)
- python scripts/train_tokenizer.py --config configs/tokenizer/bpe_24k.yaml
- python -m scripts.train_tokenizer --config configs/tokenizer/bpe_24k.yaml
+ python scripts/train_tokenizer.py --config configs/tokenizer/bpe_default.yaml
+ python -m scripts.train_tokenizer --config configs/tokenizer/bpe_default.yaml
 
 pip install --index-url https://download.pytorch.org/whl/cu124 torch torchvision torchaudio
 

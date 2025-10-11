@@ -1,185 +1,243 @@
-"""Main entry point for training and evaluating the NanoSocrates model.
+"""Entry point per addestrare o forzare l'overfit del modello NanoSocrates."""
 
-This script orchestrates the entire machine learning pipeline, including:
-- Setting up logging and experiment tracking (wandb).
-- Ensuring reproducibility by setting random seeds.
-- Loading datasets and the tokenizer.
-- Building the model, optimizer, and learning rate scheduler.
-- Initiating the training loop.
-
-Configuration is managed via YAML files, with the option to override any
-parameter directly from the command line for maximum flexibility.
-
-Example usage:
-    # Run training with a specific config file
-    python src/run.py --config-path configs/train/baseline.yaml
-
-    # Override a parameter from the command line
-    python src/run.py --config-path configs/train/baseline.yaml --training.batch_size 16
-"""
+from __future__ import annotations
 
 import argparse
 import logging
+import math
 import random
-import string
 from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
 import torch
-import wandb
-import yaml
 from tokenizers import Tokenizer
 
-from .data.builders import build_and_cache_datasets
-from .model.transformer import TinySeq2Seq
-from .training.dataloaders import create_multitask_dataloader
-from .training.loop import TrainingLoop
-from .training.scheduler import create_scheduler
+from src.data.builders import build_and_cache_datasets
+from src.model.transformer import TinySeq2Seq
+from src.training.dataloaders import create_multitask_dataloader
+from src.training.loop import TrainingLoop
+from src.training.scheduler import create_scheduler
+from src.utils.config import (
+    add_common_overrides,
+    apply_overrides,
+    apply_toy_paths,
+    load_yaml,
+)
+from src.utils.wandb_utils import maybe_init_wandb
 
-logger = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__name__)
+
+
+def _get_pad_id(tokenizer: Tokenizer) -> int:
+    pad = tokenizer.token_to_id("<pad>")
+    if pad is None:
+        raise ValueError("Tokenizer privo di <pad>: rigenera il BPE includendo <pad>.")
+    return int(pad)
 
 
 def set_seed(seed: int) -> None:
-    """Sets the random seed for reproducibility across all relevant libraries."""
+    """Assicura riproducibilità impostando tutti i seed noti."""
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    if torch.cuda.is_available():  # pragma: no cover - dipende da hw
         torch.cuda.manual_seed_all(seed)
-    logger.info(f"Random seed set to {seed}")
+    LOGGER.info("Seed fissato a %d", seed)
 
 
-def setup_wandb(config: Dict[str, Any]) -> "wandb.sdk.wandb_run.Run":
-    """Initializes and configures a Weights & Biases run."""
-    run_id = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-    run = wandb.init(
-        project=config["wandb"]["project"],
-        entity=config["wandb"].get("entity"),
-        config=config,
-        name=f"{config['wandb']['name']}-{run_id}",
-        notes=config["wandb"].get("notes"),
+def _build_model(cfg: Dict[str, Any], tokenizer: Tokenizer) -> TinySeq2Seq:
+    """Costruisce il Transformer rispettando le scelte presenti nel config."""
+
+    pad_id = _get_pad_id(tokenizer)
+    model = TinySeq2Seq(
+        vocab_size=tokenizer.get_vocab_size(),
+        d_model=int(cfg.get("d_model", 384)),
+        nhead=int(cfg.get("nhead", 6)),
+        num_encoder_layers=int(cfg.get("enc_layers", 3)),
+        num_decoder_layers=int(cfg.get("dec_layers", 3)),
+        dim_feedforward=int(cfg.get("ff_dim", 1536)),
+        dropout=float(cfg.get("dropout", 0.1)),
+        pad_id=pad_id,
+        tie_embeddings=True,
+        use_mla=bool(cfg.get("use_mla", False)),
+        use_rope=bool(cfg.get("use_rope", False)),
+        interleave_ratio=float(cfg.get("interleave_ratio", 0.0)),
+        max_position_embeddings=int(cfg.get("max_len", 256)),
+        compute_span_metrics=bool(cfg.get("compute_span_metrics", False)),
+        architecture=str(cfg.get("architecture", "vanilla")),
+        relative_attention_num_buckets=int(cfg.get("relative_attention_num_buckets", 32)),
+        relative_attention_max_distance=int(cfg.get("relative_attention_max_distance", 128)),
+        layer_norm_epsilon=float(cfg.get("layer_norm_epsilon", 1e-6)),
     )
-    logger.info("Weights & Biases run initialized.")
-    return run
+    LOGGER.info("Modello creato con %s parametri", f"{sum(p.numel() for p in model.parameters()):,}")
+    return model
 
 
-def load_essentials(config: Dict[str, Any]) -> tuple[Dict[str, Any], Tokenizer]:
-    """Loads the datasets and tokenizer."""
-    logger.info("Loading tokenizer...")
-    tokenizer = Tokenizer.from_file(config["data"]["tokenizer_path"])
-
-    logger.info("Building or loading datasets from cache...")
-    datasets = build_and_cache_datasets(config["data"], tokenizer)
-    logger.info(f"Datasets loaded. Splits: {list(datasets.keys())}")
-    
-    return datasets, tokenizer
-
-
-def build_components(
-    config: Dict[str, Any], model_vocab_size: int
-) -> tuple[TinySeq2Seq, torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR]:
-    """Builds the model, optimizer, and scheduler from the configuration."""
-    logger.info(f"Building model with architecture: {config['model']['architecture']}...")
-    model = TinySeq2Seq(vocab_size=model_vocab_size, **config["model"])
-    logger.info(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters.")
-
-    logger.info("Creating optimizer...")
-    optimizer = torch.optim.AdamW(model.parameters(), **config["optimizer"])
-
-    logger.info("Creating learning rate scheduler...")
-    # Calculate total steps for scheduler
-    num_train_samples = len(config["data"]["train_path"]) # Approximation
-    steps_per_epoch = num_train_samples // config["training"]["batch_size"]
-    total_steps = steps_per_epoch * config["training"]["num_epochs"]
-    
-    scheduler = create_scheduler(
-        optimizer=optimizer, total_steps=total_steps, **config["scheduler"]
+def _build_optimizer(cfg: Dict[str, Any], model: TinySeq2Seq) -> torch.optim.Optimizer:
+    return torch.optim.AdamW(
+        model.parameters(),
+        lr=float(cfg.get("lr", 3e-4)),
+        weight_decay=float(cfg.get("weight_decay", 0.01)),
     )
-    return model, optimizer, scheduler
 
 
-def main(config: Dict[str, Any]) -> None:
-    """The main function to run the entire pipeline."""
-    set_seed(config["training"]["seed"])
+def _build_scheduler(
+    cfg: Dict[str, Any],
+    optimizer: torch.optim.Optimizer,
+    total_steps: int,
+) -> torch.optim.lr_scheduler.LambdaLR | None:
+    name = cfg.get("scheduler")
+    if not name or total_steps <= 0:
+        return None
+    return create_scheduler(
+        str(name),
+        optimizer,
+        warmup_ratio=float(cfg.get("warmup_ratio", 0.0)),
+        total_steps=total_steps,
+        min_lr_ratio=float(cfg.get("min_lr_ratio", 0.0)),
+    )
 
-    run = setup_wandb(config) if config.get("wandb") else None
-    
-    datasets, tokenizer = load_essentials(config)
 
-    model, optimizer, scheduler = build_components(config, tokenizer.get_vocab_size())
-    
-    logger.info("Creating dataloaders...")
+def _prepare_config(args: argparse.Namespace) -> Dict[str, Any]:
+    cfg = load_yaml(args.cfg)
+    if getattr(args, "toy", False):
+        cfg = apply_toy_paths(cfg)
+        LOGGER.info("[toy] uso i dataset compatti in data/processed/toy")
+    cfg = apply_overrides(cfg, args.override)
+    return cfg
+
+
+def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
+    """Esegue l'intero ciclo di training partendo da un config strutturato."""
+
+    seed = int(cfg.get("seed", 42))
+    set_seed(seed)
+
+    tokenizer_path = cfg.get("tokenizer_file") or cfg.get("data", {}).get("tokenizer_path")
+    if not tokenizer_path:
+        raise ValueError("Specificare 'tokenizer_file' nel config di training.")
+    tokenizer = Tokenizer.from_file(str(tokenizer_path))
+
+    dataset_payload = build_and_cache_datasets(cfg, tokenizer)
+    train_dataset = dataset_payload["train"]
+    val_dataset = dataset_payload["validation"]
+    ratios = dataset_payload.get("ratios") or train_dataset.task_fractions()
+
+    if overfit:
+        limit = int(cfg.get("overfit_samples", cfg.get("batch_size", 8)))
+        train_dataset = train_dataset.select_first(limit)
+        val_dataset = train_dataset
+        ratios = train_dataset.task_fractions()
+        LOGGER.info("Modalità overfit attiva: uso i primi %d esempi", len(train_dataset))
+
+    batch_size = int(cfg.get("batch_size", 16))
+    num_workers = int(cfg.get("num_workers", 0))
+
     train_loader = create_multitask_dataloader(
-        datasets["train"],
+        train_dataset,
         tokenizer=tokenizer,
-        **config["data"]["train_loader"],
+        batch_size=batch_size,
+        ratios=ratios,
+        num_workers=num_workers,
+        shuffle=not overfit,
     )
     val_loader = create_multitask_dataloader(
-        datasets["validation"],
+        val_dataset,
         tokenizer=tokenizer,
-        shuffle=False, # No need to shuffle validation data
-        **config["data"]["val_loader"],
+        batch_size=batch_size,
+        ratios=ratios,
+        num_workers=num_workers,
+        shuffle=False,
     )
 
-    logger.info("Initializing training loop...")
-    training_loop = TrainingLoop(
+    steps_per_epoch = max(1, math.ceil(len(train_dataset) / batch_size))
+    total_steps = steps_per_epoch * int(cfg.get("num_epochs", 1))
+
+    model = _build_model(cfg, tokenizer)
+    optimizer = _build_optimizer(cfg, model)
+    scheduler = _build_scheduler(cfg, optimizer, total_steps)
+
+    save_dir = Path(cfg.get("save_dir", "checkpoints"))
+    save_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = save_dir / ("overfit.pt" if overfit else "best.pt")
+
+    run, wandb_module = maybe_init_wandb(cfg)
+
+    requested_device = str(cfg.get("device", "cuda") or "cuda").lower()
+    if requested_device == "cuda" and not torch.cuda.is_available():
+        LOGGER.warning("CUDA non disponibile: eseguo il training su CPU")
+        device = "cpu"
+    else:
+        device = requested_device
+    use_amp = bool(cfg.get("use_amp", True)) and device == "cuda"
+
+    loop = TrainingLoop(
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
         train_loader=train_loader,
         val_loader=val_loader,
+        device=device,
+        use_amp=use_amp,
+        grad_accum_steps=int(cfg.get("gradient_accumulation_steps", 1)),
+        log_every_n_steps=int(cfg.get("log_every_n_steps", 50)),
+        checkpoint_path=str(checkpoint_path),
+        early_stopping_patience=int(cfg.get("early_stopping", {}).get("patience", 5)),
+        early_stopping_metric=str(cfg.get("early_stopping", {}).get("metric", "loss")),
+        early_stopping_mode=str(cfg.get("early_stopping", {}).get("mode", "min")),
         wandb_run=run,
-        **config["training_loop"],
     )
 
-    training_loop.run(num_epochs=config["training"]["num_epochs"])
+    num_epochs = int(cfg.get("num_epochs", 1))
+    if num_epochs <= 0:
+        LOGGER.info("num_epochs=0: pipeline configurata, nessun batch elaborato.")
+    else:
+        loop.run(num_epochs=num_epochs)
 
-    if run:
-        run.finish()
-    logger.info("Pipeline finished successfully.")
-
-
-def parse_args() -> argparse.Namespace:
-    """Parses command-line arguments for configuration."""
-    parser = argparse.ArgumentParser(description="Run NanoSocrates Training")
-    parser.add_argument(
-        "--config-path", type=Path, required=True, help="Path to the YAML config file."
-    )
-    # Allows overriding config values, e.g., --training.batch_size 32
-    parser.add_argument(
-        "overrides",
-        nargs="*",
-        help="<key>=<value> pairs to override config values.",
-    )
-    return parser.parse_args()
-
-
-def load_config_with_overrides(args: argparse.Namespace) -> Dict[str, Any]:
-    """Loads a YAML config and applies command-line overrides."""
-    with open(args.config_path) as f:
-        config = yaml.safe_load(f)
-
-    for override in args.overrides:
-        key_str, value = override.split("=", 1)
-        keys = key_str.split(".")
-        sub_config = config
-        for key in keys[:-1]:
-            sub_config = sub_config.setdefault(key, {})
-        
-        # Attempt to cast value to its correct type
+    if run is not None and wandb_module is not None:
         try:
-            value = eval(value)
-        except (NameError, SyntaxError):
-            pass # Keep as string if it's not a basic type
-        sub_config[keys[-1]] = value
-        
-    return config
+            wandb_module.finish()
+        except Exception as exc:  # pragma: no cover - dipende da env
+            LOGGER.warning("Chiusura wandb fallita: %s", exc)
+
+    LOGGER.info("Training completato. Checkpoint salvato in %s", checkpoint_path.resolve())
+
+
+def cmd_train(args: argparse.Namespace) -> None:
+    cfg = _prepare_config(args)
+    run_training(cfg, overfit=False)
+
+
+def cmd_overfit(args: argparse.Namespace) -> None:
+    cfg = _prepare_config(args)
+    run_training(cfg, overfit=True)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Pipeline di training NanoSocrates")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_train = sub.add_parser("train", help="Addestra il modello sul dataset indicato")
+    add_common_overrides(p_train)
+
+    p_overfit = sub.add_parser("overfit", help="Forza l'overfit di un singolo batch")
+    add_common_overrides(p_overfit)
+
+    return parser
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    args = build_parser().parse_args()
+    if args.command == "train":
+        cmd_train(args)
+    elif args.command == "overfit":
+        cmd_overfit(args)
+    else:  # pragma: no cover - guardia difensiva
+        raise ValueError(f"Comando sconosciuto: {args.command}")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-    
-    args = parse_args()
-    config = load_config_with_overrides(args)
-    main(config)
+    main()
