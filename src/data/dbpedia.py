@@ -7,9 +7,9 @@ DBpedia client:
 
 from __future__ import annotations
 from typing import Dict, Iterable, Iterator, List, Tuple
-from utils.config import load_yaml
-from utils.logging import get_logger
-from data.serialization import normalize_prefix
+from ..utils.config import load_yaml
+from ..utils.logging import get_logger
+from .serialization import normalize_prefix
 
 logger = get_logger("dbpedia")
 

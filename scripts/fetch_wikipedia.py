@@ -22,9 +22,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from tqdm import tqdm
 
-from utils.io import read_jsonl, write_jsonl
-from utils.config import load_yaml
-from utils.logging import get_logger
+from src.utils.io import read_jsonl, write_jsonl
+from src.utils.config import load_yaml
+from src.utils.logging import get_logger
 
 logger = get_logger("wikipedia_fetch_simple")
 

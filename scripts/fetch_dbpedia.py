@@ -4,8 +4,9 @@ Estrae triple 1-hop da DBpedia con whitelist di predicati.
 Scrive JSONL: {film, dir, p, o}.
 """
 import argparse
-from utils.io import write_jsonl
-from data.dbpedia import fetch_triples
+
+from src.utils.io import write_jsonl
+from src.data.dbpedia import fetch_triples
 
 def main():
     ap = argparse.ArgumentParser()
