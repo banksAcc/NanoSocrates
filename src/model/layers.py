@@ -638,11 +638,22 @@ class RelativePositionBias(nn.Module):
         is_small = relative_position < max_exact
 
         # For positions beyond max_exact, use a logarithmic scale
-        log_ratio = math.log(max_dist / max_exact) if max_dist > max_exact else 1.0
-        large_pos = max_exact + (
-            torch.log(relative_position.float() / max_exact + 1e-6) / log_ratio
-        ) * (num_buckets - max_exact)
-        large_pos = torch.min(large_pos.long(), torch.full_like(large_pos, num_buckets - 1))
+        if max_exact > 0 and max_dist > max_exact:
+            log_ratio = math.log(max_dist / max_exact)
+        else:
+            log_ratio = 1.0
+
+        if max_exact > 0:
+            large_pos = max_exact + (
+                torch.log(relative_position.float() / max_exact + 1e-6) / log_ratio
+            ) * (num_buckets - max_exact)
+        else:
+            large_pos = torch.zeros_like(relative_position, dtype=relative_position.dtype)
+        large_pos = large_pos.to(dtype=relative_position.dtype)
+        large_pos = torch.min(
+            large_pos,
+            torch.full_like(relative_position, num_buckets - 1, dtype=relative_position.dtype),
+        )
 
         relative_buckets += torch.where(is_small, relative_position, large_pos)
         return relative_buckets
