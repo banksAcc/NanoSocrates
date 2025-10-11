@@ -1,0 +1,1 @@
+"""Spazio dei moduli NanoSocrates con descrizioni chiare per la review."""

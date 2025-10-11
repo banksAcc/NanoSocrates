@@ -3,7 +3,7 @@ from src.tokenizer.train_bpe import train_bpe
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/tokenizer/bpe_24k.yaml")
+    ap.add_argument("--config", default="configs/tokenizer/bpe_default.yaml")
     args = ap.parse_args()
     with open(args.config, "r", encoding="utf-8") as f:
         C = yaml.safe_load(f)

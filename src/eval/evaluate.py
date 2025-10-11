@@ -1,4 +1,5 @@
-"""Orchestratore di valutazione su split val/test."""
+"""Valutazione dei checkpoint con spiegazioni passo-passo."""
+
 from __future__ import annotations
 
 import os
@@ -20,6 +21,8 @@ from src.tokenizer.tokenizer_io import TokWrapper
 from src.training.dataloaders import JsonlSeq2Seq, pad_collate
 
 def _select_device(want: Optional[str]) -> str:
+    """Sceglie "cuda" solo se disponibile, altrimenti ripiega su CPU."""
+
     want = (want or "cuda").lower()
     if want == "cuda" and torch.cuda.is_available():
         return "cuda"
@@ -27,6 +30,8 @@ def _select_device(want: Optional[str]) -> str:
 
 
 def _normalise_text(text: str) -> str:
+    """Pulisce testo generato eliminando padding e newline."""
+
     if not text:
         return ""
     cleaned = [tok for tok in text.replace("\n", " ").split() if tok and tok != "<pad>"]
@@ -39,6 +44,8 @@ def _load_model_from_checkpoint(
     device: str,
     overrides: Optional[Mapping[str, object]] = None,
 ) -> tuple[TinySeq2Seq, Dict[str, object]]:
+    """Ricostruisce il modello a partire da un checkpoint salvato."""
+
     overrides = dict(overrides or {})
     ckpt = torch.load(checkpoint_path, map_location=device)
     saved_cfg: MutableMapping[str, object] = dict(ckpt.get("config", {}))
@@ -83,6 +90,8 @@ def load_model_and_tokenizer(
     device: Optional[str] = None,
     overrides: Optional[Mapping[str, object]] = None,
 ) -> tuple[TinySeq2Seq, TokWrapper, str, Dict[str, object]]:
+    """Carica coppia tokenizer+modello e restituisce anche il device scelto."""
+
     device_sel = _select_device(device)
     tokenizer = TokWrapper(tokenizer_file)
     model, saved_cfg = _load_model_from_checkpoint(
@@ -93,6 +102,8 @@ def load_model_and_tokenizer(
 
 @torch.no_grad()
 def _compute_loss(model: TinySeq2Seq, dataloader: DataLoader, device: str) -> float:
+    """Calcola la loss media iterando sul dataloader indicato."""
+
     total = 0.0
     steps = 0
     for batch in dataloader:
@@ -123,6 +134,8 @@ def _generate_predictions(
     device: str,
     max_new_tokens: int,
 ) -> tuple[List[str], List[str], List[str]]:
+    """Genera predizioni greedy restituendo anche i task di provenienza."""
+
     predictions: List[str] = []
     references: List[str] = []
     tasks: List[str] = []
@@ -146,6 +159,8 @@ def _group_by_task(
     references: Iterable[str],
     tasks: Iterable[str],
 ) -> Dict[str, Dict[str, List[str]]]:
+    """Aggrega predizioni e riferimenti per task nominale."""
+
     buckets: Dict[str, Dict[str, List[str]]] = defaultdict(lambda: {"pred": [], "ref": []})
     for pred, ref, task in zip(predictions, references, tasks):
         buckets[task]["pred"].append(pred)
@@ -154,6 +169,8 @@ def _group_by_task(
 
 
 def _metrics_for_task(task: str, preds: List[str], refs: List[str]) -> Dict[str, float]:
+    """Seleziona automaticamente la metrica corretta in base al task."""
+
     if task == "rdf2text":
         return compute_text_generation_metrics(preds, refs)
     if task in {"text2rdf", "rdfcomp2"}:
@@ -165,6 +182,8 @@ def _metrics_for_task(task: str, preds: List[str], refs: List[str]) -> Dict[str,
 
 
 def _normalise_tasks_config(raw_tasks) -> Dict[str, Dict[str, str]]:
+    """Uniforma i vari formati YAML in un dizionario standard."""
+
     if isinstance(raw_tasks, Mapping):
         return {str(name): dict(cfg) for name, cfg in raw_tasks.items()}
     tasks_dict: Dict[str, Dict[str, str]] = {}
@@ -180,6 +199,8 @@ def _normalise_tasks_config(raw_tasks) -> Dict[str, Dict[str, str]]:
 
 
 def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
+    """Esegue la valutazione completa seguendo i path indicati nel config."""
+
     if "checkpoint" not in config:
         raise ValueError("Il config di valutazione richiede 'checkpoint'.")
     if "tokenizer_file" not in config:
