@@ -6,10 +6,11 @@ Costruzione dei 4 dataset (Text2RDF, RDF2Text, RDF Completion 1 & 2).
 """
 
 from __future__ import annotations
-from typing import Iterable, Dict, List, Tuple
+from typing import Iterable, Dict, List, Tuple, Mapping, Any
 import random
 
-from data.serialization import linearize
+from .serialization import linearize
+from src.training.dataloaders import JsonlSeq2Seq, MultiTaskDataset
 
 # Token di task (prefisso in input)
 TASK_T2RDF = "<Text2RDF>"
@@ -73,3 +74,79 @@ def build_comp2(pairs_iter: Iterable[dict], max_len: int = 384):
             "input": ctx + " " + TASK_CONT,
             "target": nxt,
         }
+
+
+def _select_task_name(dataset: JsonlSeq2Seq, fallback: str) -> str:
+    """Returns the canonical task name for a dataset instance."""
+
+    if dataset.items:
+        return dataset.items[0].task
+    return fallback
+
+
+def build_and_cache_datasets(
+    config: Mapping[str, Any],
+    tokenizer: Any,
+) -> Dict[str, MultiTaskDataset | Dict[str, float]]:
+    """Materialises training/validation datasets based on a YAML configuration."""
+
+    max_len = int(config.get("max_len", 256))
+    dataset_specs = config.get("datasets")
+
+    train_items: List[Any] = []
+    val_items: List[Any] = []
+    ratios: Dict[str, float] = {}
+
+    if dataset_specs:
+        for entry in dataset_specs:
+            if not isinstance(entry, Mapping):
+                raise ValueError("Ogni dataset deve essere un mapping con path 'train'/'val'.")
+            train_path = entry.get("train")
+            val_path = entry.get("val") or entry.get("validation")
+            if not train_path or not val_path:
+                raise ValueError("Specifica i path 'train' e 'val' per ogni dataset.")
+            task_hint = entry.get("name") or entry.get("task")
+            weight = float(entry.get("weight", 1.0))
+
+            train_ds = JsonlSeq2Seq(str(train_path), tokenizer, max_len=max_len, task=task_hint)
+            val_ds = JsonlSeq2Seq(str(val_path), tokenizer, max_len=max_len, task=task_hint)
+
+            task_name = _select_task_name(train_ds, str(task_hint or train_path))
+            ratios[task_name] = weight
+
+            train_items.extend(train_ds.items)
+            val_items.extend(val_ds.items)
+    else:
+        train_path = config.get("train_file") or config.get("train_path")
+        val_path = (
+            config.get("val_file")
+            or config.get("validation_file")
+            or config.get("val_path")
+        )
+        if not train_path or not val_path:
+            raise ValueError(
+                "Config di training privo di 'train_file'/'val_file' o sezione 'datasets'."
+            )
+        task_hint = config.get("task") or config.get("name")
+        weight = float(config.get("weight", 1.0))
+
+        train_ds = JsonlSeq2Seq(str(train_path), tokenizer, max_len=max_len, task=task_hint)
+        val_ds = JsonlSeq2Seq(str(val_path), tokenizer, max_len=max_len, task=task_hint)
+
+        task_name = _select_task_name(train_ds, str(task_hint or train_path))
+        ratios[task_name] = weight
+
+        train_items.extend(train_ds.items)
+        val_items.extend(val_ds.items)
+
+    if not train_items:
+        raise ValueError("Nessun esempio disponibile nel dataset di training.")
+
+    train_dataset = MultiTaskDataset(train_items)
+    val_dataset = MultiTaskDataset(val_items or train_items)
+
+    return {
+        "train": train_dataset,
+        "validation": val_dataset,
+        "ratios": ratios,
+    }

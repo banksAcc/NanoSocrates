@@ -171,10 +171,13 @@ class TrainingLoop:
 
         for i, batch in enumerate(pbar):
             batch = self._transfer_batch_to_device(batch)
+            # Keep metadata (e.g., task names) out of the model call while
+            # forwarding all tensor payloads such as masks and labels.
+            model_inputs = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
             step = (epoch - 1) * len(self.train_loader) + i
 
             with autocast(enabled=self.use_amp):
-                outputs = self.model(**batch)
+                outputs = self.model(**model_inputs)
                 loss = outputs["loss"]
                 if loss is None:
                     continue
@@ -229,8 +232,9 @@ class TrainingLoop:
 
         for batch in pbar:
             batch = self._transfer_batch_to_device(batch)
+            model_inputs = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
             with autocast(enabled=self.use_amp):
-                outputs = self.model(**batch)
+                outputs = self.model(**model_inputs)
 
             if outputs["loss"] is not None:
                 metrics_agg["loss"] += outputs["loss"].item() * len(batch["input_ids"])
