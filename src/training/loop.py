@@ -114,7 +114,6 @@ class TrainingLoop:
                 # Older PyTorch versions expect the legacy signature without the
                 # device argument. Fall back gracefully so training still works.
                 self.scaler = amp.GradScaler(enabled=True)
-
         self.model.to(self.device)
 
     def run(self, num_epochs: int) -> dict[str, Any]:
