@@ -108,8 +108,12 @@ class TrainingLoop:
 
         self.scaler = None
         if self.use_amp:
-            self.scaler = amp.GradScaler(device_type=self.device.type, enabled=True)
-
+          try:
+                self.scaler = amp.GradScaler(device=self.device.type, enabled=True)
+            except TypeError:
+                # Older PyTorch versions expect the legacy signature without the
+                # device argument. Fall back gracefully so training still works.
+                self.scaler = amp.GradScaler(enabled=True)
         self.model.to(self.device)
 
     def run(self, num_epochs: int) -> dict[str, Any]:
