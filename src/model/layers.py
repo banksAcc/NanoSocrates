@@ -36,14 +36,34 @@ class SinusoidalPE(nn.Module):
             max_len: The maximum sequence length that this model might ever see.
         """
         super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        self.d_model = d_model
+        self.register_buffer(
+            "div_term",
+            torch.exp(
+                torch.arange(0, d_model, 2, dtype=torch.float32)
+                * (-math.log(10000.0) / d_model)
+            ),
+            persistent=False,
         )
-        pe[:, 0::2] = torch.sin(pos * div_term)
-        pe[:, 1::2] = torch.cos(pos * div_term)
-        self.register_buffer("pe", pe.unsqueeze(0), persistent=False)
+        self.register_buffer("pe", torch.empty(1, 0, d_model), persistent=False)
+        self._ensure_pe(max_len)
+
+    def _ensure_pe(self, seq_len: int) -> None:
+        """Extends the cached encodings to cover ``seq_len`` tokens if needed."""
+
+        cached = self.pe.size(1)
+        if seq_len <= cached:
+            return
+
+        # Grow the cache with some headroom to avoid rebuilding every call.
+        new_max = max(seq_len, int(cached * 1.5) or seq_len)
+        device = self.div_term.device
+        dtype = self.div_term.dtype
+        pos = torch.arange(new_max, device=device, dtype=dtype).unsqueeze(1)
+        pe = torch.zeros(new_max, self.d_model, device=device, dtype=dtype)
+        pe[:, 0::2] = torch.sin(pos * self.div_term)
+        pe[:, 1::2] = torch.cos(pos * self.div_term)
+        self.pe = pe.unsqueeze(0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Adds positional encoding to the input tensor.
@@ -56,8 +76,13 @@ class SinusoidalPE(nn.Module):
             The input tensor with added positional encodings.
             Shape: (batch_size, seq_len, d_model)
         """
-        # Add positional encodings up to the sequence length of the input
-        return x + self.pe[:, : x.size(1)]
+
+        seq_len = x.size(1)
+        self._ensure_pe(seq_len)
+        pe = self.pe[:, :seq_len]
+        if pe.dtype != x.dtype:
+            pe = pe.to(dtype=x.dtype)
+        return x + pe
 
 
 class RotaryEmbedding(nn.Module):
