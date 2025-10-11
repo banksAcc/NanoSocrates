@@ -48,7 +48,12 @@ def _load_model_from_checkpoint(
 
     overrides = dict(overrides or {})
     ckpt = torch.load(checkpoint_path, map_location=device)
-    saved_cfg: MutableMapping[str, object] = dict(ckpt.get("config", {}))
+    if isinstance(ckpt, Mapping):
+        saved_cfg: MutableMapping[str, object] = dict(ckpt.get("config", {}))
+        state_dict = ckpt.get("model", ckpt)
+    else:
+        saved_cfg = {}
+        state_dict = ckpt
     saved_cfg.update(overrides)
 
     required = ["d_model", "nhead", "enc_layers", "dec_layers", "ff_dim", "dropout"]
@@ -78,7 +83,7 @@ def _load_model_from_checkpoint(
         relative_attention_max_distance=int(saved_cfg.get("relative_attention_max_distance", 128)),
         layer_norm_epsilon=float(saved_cfg.get("layer_norm_epsilon", 1e-6)),
     ).to(device)
-    model.load_state_dict(ckpt["model"])
+    model.load_state_dict(state_dict)
     model.eval()
     return model, dict(saved_cfg)
 
@@ -141,16 +146,50 @@ def _generate_predictions(
     tasks: List[str] = []
 
     for ex in dataset.items:
+        source: str = ""
+        target: str = ""
+        task_name: str | None = None
+
+        if isinstance(ex, Mapping):
+            source = str(
+                ex.get("input")
+                or ex.get("source")
+                or ex.get("raw_input")
+                or ""
+            )
+            target = str(
+                ex.get("target")
+                or ex.get("output")
+                or ex.get("label")
+                or ex.get("raw_target")
+                or ""
+            )
+            task_name = ex.get("task") or ex.get("task_name")
+        else:
+            source = str(
+                getattr(ex, "input_text", None)
+                or getattr(ex, "input", "")
+            )
+            target = str(
+                getattr(ex, "target_text", None)
+                or getattr(ex, "target", None)
+                or getattr(ex, "label", "")
+            )
+            task_name = getattr(ex, "task", None)
+
+        if not source:
+            continue
+
         pred = decode_to_text(
             model,
             tokenizer,
-            ex.input,
+            source,
             max_new_tokens=max_new_tokens,
             device=device,
         )
         predictions.append(_normalise_text(pred))
-        references.append(_normalise_text(ex.target))
-        tasks.append(ex.task or "unknown")
+        references.append(_normalise_text(target))
+        tasks.append(str(task_name or "unknown"))
     return predictions, references, tasks
 
 

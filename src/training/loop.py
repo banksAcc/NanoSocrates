@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Literal
 
 import torch
-from torch.cuda.amp import GradScaler, autocast
+from torch import amp
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -77,6 +76,13 @@ class TrainingLoop:
         self.scheduler = scheduler
         self.train_loader = train_loader
         self.val_loader = val_loader
+        try:
+            self._train_loader_len = len(train_loader)
+        except TypeError:
+            # Some DataLoader implementations are iterable-only and do not
+            # expose their length. Treat it as unknown so we can fall back to
+            # observed batches for logging and bookkeeping.
+            self._train_loader_len = None
         self.grad_accum_steps = grad_accum_steps
         self.log_every_n_steps = log_every_n_steps
         self.checkpoint_path = checkpoint_path
@@ -91,18 +97,32 @@ class TrainingLoop:
 
         # Auto-detect device if not provided
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self.device = torch.device(device)
         logger.info(f"Using device: {self.device}")
 
         # AMP setup
-        self.use_amp = use_amp and self.device == "cuda"
-        self.scaler = GradScaler(enabled=self.use_amp)
+        self.use_amp = use_amp and self.device.type == "cuda"
+        self.autocast_kwargs = {
+            "device_type": self.device.type,
+            "enabled": self.use_amp,
+        }
         if self.use_amp:
+            self.autocast_kwargs["dtype"] = torch.float16
             logger.info("Automatic Mixed Precision (AMP) enabled.")
 
+        self.scaler = None
+        if self.use_amp:
+            try:
+                self.scaler = amp.GradScaler(device_type=self.device.type, enabled=True)
+            except TypeError:
+                # Older PyTorch versions expect the legacy signature without the
+                # device argument. Fall back gracefully so training still works.
+                self.scaler = amp.GradScaler(enabled=True)
+
         self.model.to(self.device)
+        self._global_step = 0
 
     def run(self, num_epochs: int) -> dict[str, Any]:
         """Starts and manages the training process for a given number of epochs.
@@ -114,6 +134,17 @@ class TrainingLoop:
             A dictionary containing the best score achieved and the epoch at which
             it occurred.
         """
+        if self._train_loader_len == 0:
+            logger.warning(
+                "Training DataLoader reports zero length; continuing but metrics will use "
+                "observed batches only."
+            )
+        elif self._train_loader_len is None:
+            logger.warning(
+                "Training DataLoader does not report its length; using observed batches for "
+                "logging and averaging."
+            )
+
         logger.info("Starting training...")
         for epoch in range(1, num_epochs + 1):
             logger.info(f"Epoch {epoch}/{num_epochs}")
@@ -121,10 +152,18 @@ class TrainingLoop:
             train_metrics = self._train_epoch(epoch)
             val_metrics = self._validate_epoch()
 
+            metric_value = val_metrics.get(self.es_metric)
+
             if self.scheduler:
                 # Some schedulers use metrics (e.g., ReduceLROnPlateau)
                 if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    self.scheduler.step(val_metrics[self.es_metric])
+                    if metric_value is None:
+                        logger.warning(
+                            "Scheduler expects metric '%s' but it was missing; skipping scheduler step for this epoch.",
+                            self.es_metric,
+                        )
+                    else:
+                        self.scheduler.step(metric_value)
                 else:
                     self.scheduler.step()
 
@@ -141,7 +180,14 @@ class TrainingLoop:
             logger.info(f"Validation metrics: {val_metrics}")
 
             # Early stopping and checkpointing
-            current_score = val_metrics[self.es_metric]
+            if metric_value is None:
+                logger.warning(
+                    "Validation metrics missing '%s'; skipping checkpoint/early stopping update for this epoch.",
+                    self.es_metric,
+                )
+                continue
+
+            current_score = metric_value
             if self._check_early_stopping(current_score):
                 logger.info("Early stopping triggered.")
                 break
@@ -169,22 +215,32 @@ class TrainingLoop:
             dynamic_ncols=True,
         )
 
+        num_batches = 0
+
         for i, batch in enumerate(pbar):
             batch = self._transfer_batch_to_device(batch)
-            step = (epoch - 1) * len(self.train_loader) + i
+            model_inputs = self._prepare_model_inputs(batch)
+            step = self._global_step
 
-            with autocast(enabled=self.use_amp):
-                outputs = self.model(**batch)
+            with amp.autocast(**self.autocast_kwargs):
+                outputs = self.model(**model_inputs)
                 loss = outputs["loss"]
                 if loss is None:
+                    self._global_step += 1
                     continue
                 loss = loss / self.grad_accum_steps
 
-            self.scaler.scale(loss).backward()
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
             if (i + 1) % self.grad_accum_steps == 0:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                if self.use_amp:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
 
             # Update progress bar with smoothed loss
@@ -206,7 +262,14 @@ class TrainingLoop:
                         log_data[f"train/{k}"] = v
                 self.wandb_run.log(log_data, step=step)
 
-        avg_loss = total_loss / len(self.train_loader)
+            num_batches += 1
+            self._global_step += 1
+
+        if num_batches == 0:
+            logger.warning("Training DataLoader produced no batches; returning empty metrics.")
+            return {}
+
+        avg_loss = total_loss / num_batches
         return {"loss": avg_loss}
 
     @torch.inference_mode()
@@ -229,8 +292,9 @@ class TrainingLoop:
 
         for batch in pbar:
             batch = self._transfer_batch_to_device(batch)
-            with autocast(enabled=self.use_amp):
-                outputs = self.model(**batch)
+            model_inputs = self._prepare_model_inputs(batch)
+            with amp.autocast(**self.autocast_kwargs):
+                outputs = self.model(**model_inputs)
 
             if outputs["loss"] is not None:
                 metrics_agg["loss"] += outputs["loss"].item() * len(batch["input_ids"])
@@ -240,6 +304,12 @@ class TrainingLoop:
                     metrics_agg[k] += v * len(batch["input_ids"])
 
             total_count += len(batch["input_ids"])
+
+        if total_count == 0:
+            logger.warning(
+                "Validation DataLoader produced no batches; returning empty metrics."
+            )
+            return {}
 
         # Average the metrics over the entire dataset
         avg_metrics = {k: v / total_count for k, v in metrics_agg.items()}
@@ -260,7 +330,16 @@ class TrainingLoop:
             self.best_score = current_score
             self.es_counter = 0
             logger.info(f"New best score: {self.best_score:.4f}. Saving model...")
-            torch.save(self.model.state_dict(), self.checkpoint_path)
+
+            checkpoint: dict[str, object] = {"model": self.model.state_dict()}
+            export_fn = getattr(self.model, "export_config", None)
+            if callable(export_fn):
+                try:
+                    checkpoint["config"] = export_fn()
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    logger.warning("Unable to export model config for checkpoint: %s", exc)
+
+            torch.save(checkpoint, self.checkpoint_path)
         else:
             self.es_counter += 1
             logger.info(f"No improvement. Early stopping counter: {self.es_counter}/{self.es_patience}")
@@ -273,3 +352,17 @@ class TrainingLoop:
             k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
             for k, v in batch.items()
         }
+
+    @staticmethod
+    def _prepare_model_inputs(batch: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Filters a collated batch to only the tensors consumed by the model."""
+
+        allowed_keys = {
+            "input_ids",
+            "attention_mask",
+            "decoder_input_ids",
+            "labels",
+            "mask_positions",
+            "mask_lengths",
+        }
+        return {k: v for k, v in batch.items() if k in allowed_keys}

@@ -92,6 +92,7 @@ def build_and_cache_datasets(
 
     max_len = int(config.get("max_len", 256))
     dataset_specs = config.get("datasets")
+    enable_entity_spans = bool(config.get("enable_entity_spans", False))
 
     train_items: List[Any] = []
     val_items: List[Any] = []
@@ -108,8 +109,21 @@ def build_and_cache_datasets(
             task_hint = entry.get("name") or entry.get("task")
             weight = float(entry.get("weight", 1.0))
 
-            train_ds = JsonlSeq2Seq(str(train_path), tokenizer, max_len=max_len, task=task_hint)
-            val_ds = JsonlSeq2Seq(str(val_path), tokenizer, max_len=max_len, task=task_hint)
+            spans_flag = bool(entry.get("enable_entity_spans", enable_entity_spans))
+            train_ds = JsonlSeq2Seq(
+                str(train_path),
+                tokenizer,
+                max_len=max_len,
+                task=task_hint,
+                enable_entity_spans=spans_flag,
+            )
+            val_ds = JsonlSeq2Seq(
+                str(val_path),
+                tokenizer,
+                max_len=max_len,
+                task=task_hint,
+                enable_entity_spans=spans_flag,
+            )
 
             task_name = _select_task_name(train_ds, str(task_hint or train_path))
             ratios[task_name] = weight
@@ -130,8 +144,20 @@ def build_and_cache_datasets(
         task_hint = config.get("task") or config.get("name")
         weight = float(config.get("weight", 1.0))
 
-        train_ds = JsonlSeq2Seq(str(train_path), tokenizer, max_len=max_len, task=task_hint)
-        val_ds = JsonlSeq2Seq(str(val_path), tokenizer, max_len=max_len, task=task_hint)
+        train_ds = JsonlSeq2Seq(
+            str(train_path),
+            tokenizer,
+            max_len=max_len,
+            task=task_hint,
+            enable_entity_spans=enable_entity_spans,
+        )
+        val_ds = JsonlSeq2Seq(
+            str(val_path),
+            tokenizer,
+            max_len=max_len,
+            task=task_hint,
+            enable_entity_spans=enable_entity_spans,
+        )
 
         task_name = _select_task_name(train_ds, str(task_hint or train_path))
         ratios[task_name] = weight
