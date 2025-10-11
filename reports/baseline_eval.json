@@ -1,0 +1,118 @@
+{
+  "checkpoint": "C:\\Users\\amile\\OneDrive - Politecnico di Bari\\Personal-Surface\\UNI\\magistrale poliba\\ESAMI\\DEEP LEARNING\\PROGETTO\\NanoSocrates\\checkpoints\\baseline\\best.pt",
+  "device": "cuda",
+  "splits": {
+    "val": {
+      "tasks": {
+        "text2rdf": {
+          "path": "data/processed/toy/text2rdf.val.jsonl",
+          "loss": 104.13439178466797,
+          "num_samples": 4,
+          "metrics": {
+            "text2rdf": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "samples": 4
+            }
+          }
+        },
+        "rdf2text": {
+          "path": "data/processed/toy/rdf2text.val.jsonl",
+          "loss": 106.3720703125,
+          "num_samples": 4,
+          "metrics": {
+            "rdf2text": {
+              "bleu": 1.577326308624475e-10,
+              "rouge_l": 0.0,
+              "meteor": 0.0,
+              "samples": 4
+            }
+          }
+        },
+        "rdfcomp1": {
+          "path": "data/processed/toy/rdfcomp1.val.jsonl",
+          "loss": 91.68690490722656,
+          "num_samples": 4,
+          "metrics": {
+            "rdfcomp1": {
+              "accuracy": 0.0,
+              "samples": 4
+            }
+          }
+        },
+        "rdfcomp2": {
+          "path": "data/processed/toy/rdfcomp2.val.jsonl",
+          "loss": 103.0380630493164,
+          "num_samples": 4,
+          "metrics": {
+            "rdfcomp2": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "samples": 4
+            }
+          }
+        }
+      },
+      "avg_loss": 101.30785751342773,
+      "num_samples": 16
+    },
+    "test": {
+      "tasks": {
+        "text2rdf": {
+          "path": "data/processed/toy/text2rdf.test.jsonl",
+          "loss": 103.8475570678711,
+          "num_samples": 4,
+          "metrics": {
+            "text2rdf": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "samples": 4
+            }
+          }
+        },
+        "rdf2text": {
+          "path": "data/processed/toy/rdf2text.test.jsonl",
+          "loss": 102.5037841796875,
+          "num_samples": 4,
+          "metrics": {
+            "rdf2text": {
+              "bleu": 1.577326308624475e-10,
+              "rouge_l": 0.0,
+              "meteor": 0.0,
+              "samples": 4
+            }
+          }
+        },
+        "rdfcomp1": {
+          "path": "data/processed/toy/rdfcomp1.test.jsonl",
+          "loss": 84.16703796386719,
+          "num_samples": 4,
+          "metrics": {
+            "rdfcomp1": {
+              "accuracy": 0.0,
+              "samples": 4
+            }
+          }
+        },
+        "rdfcomp2": {
+          "path": "data/processed/toy/rdfcomp2.test.jsonl",
+          "loss": 100.80078887939453,
+          "num_samples": 4,
+          "metrics": {
+            "rdfcomp2": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "samples": 4
+            }
+          }
+        }
+      },
+      "avg_loss": 97.82979202270508,
+      "num_samples": 16
+    }
+  }
+}
