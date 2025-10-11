@@ -9,7 +9,7 @@ Output: {"film", "text", "triples": [(s, p, o), ...]}
 from __future__ import annotations
 from collections import defaultdict
 from typing import Dict, Iterable, Iterator, List, Tuple
-from utils.logging import get_logger
+from ..utils.logging import get_logger
 
 logger = get_logger("pairing")
 

@@ -17,13 +17,13 @@ from __future__ import annotations
 import argparse, os, random, json
 from typing import List, Dict, Iterable
 
-from utils.io import read_jsonl, write_jsonl
-from utils.config import load_yaml
-from utils.logging import get_logger
-from data.pairing import pair_and_filter
+from src.utils.io import read_jsonl, write_jsonl
+from src.utils.config import load_yaml
+from src.utils.logging import get_logger
+from src.data.pairing import pair_and_filter
 
 # Task builders (usati solo se --emit_tasks)
-from data.builders import build_text2rdf, build_rdf2text, build_comp1, build_comp2
+from src.data.builders import build_text2rdf, build_rdf2text, build_comp1, build_comp2
 
 logger = get_logger("build_dataset")
 

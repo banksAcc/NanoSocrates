@@ -10,8 +10,8 @@ import time, urllib.parse
 from typing import Dict, Iterator, Iterable, Optional
 import requests
 
-from utils.config import load_yaml
-from utils.logging import get_logger
+from ..utils.config import load_yaml
+from ..utils.logging import get_logger
 
 logger = get_logger("wikipedia")
 

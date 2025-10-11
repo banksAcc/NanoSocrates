@@ -2,7 +2,7 @@
 
 import argparse
 
-from run import cmd_overfit
+from src.run import cmd_overfit
 from src.utils.config import add_common_overrides
 
 
