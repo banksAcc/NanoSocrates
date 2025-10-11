@@ -1,4 +1,4 @@
-checkpoint: "checkpoints/baseline/best.pt"
+checkpoint: "checkpoints/mix3322/best.pt"
 tokenizer_file: "data/vocab/bpe.json"
 max_len: 256
 batch_size: 8
