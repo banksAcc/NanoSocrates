@@ -146,16 +146,50 @@ def _generate_predictions(
     tasks: List[str] = []
 
     for ex in dataset.items:
+        source: str = ""
+        target: str = ""
+        task_name: str | None = None
+
+        if isinstance(ex, Mapping):
+            source = str(
+                ex.get("input")
+                or ex.get("source")
+                or ex.get("raw_input")
+                or ""
+            )
+            target = str(
+                ex.get("target")
+                or ex.get("output")
+                or ex.get("label")
+                or ex.get("raw_target")
+                or ""
+            )
+            task_name = ex.get("task") or ex.get("task_name")
+        else:
+            source = str(
+                getattr(ex, "input_text", None)
+                or getattr(ex, "input", "")
+            )
+            target = str(
+                getattr(ex, "target_text", None)
+                or getattr(ex, "target", None)
+                or getattr(ex, "label", "")
+            )
+            task_name = getattr(ex, "task", None)
+
+        if not source:
+            continue
+
         pred = decode_to_text(
             model,
             tokenizer,
-            ex.input,
+            source,
             max_new_tokens=max_new_tokens,
             device=device,
         )
         predictions.append(_normalise_text(pred))
-        references.append(_normalise_text(ex.target))
-        tasks.append(ex.task or "unknown")
+        references.append(_normalise_text(target))
+        tasks.append(str(task_name or "unknown"))
     return predictions, references, tasks
 
 
