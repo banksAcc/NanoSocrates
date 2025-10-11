@@ -8,7 +8,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Literal
 
 import torch
-from torch.cuda.amp import GradScaler, autocast
+from torch import amp
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -91,16 +91,24 @@ class TrainingLoop:
 
         # Auto-detect device if not provided
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self.device = torch.device(device)
         logger.info(f"Using device: {self.device}")
 
         # AMP setup
-        self.use_amp = use_amp and self.device == "cuda"
-        self.scaler = GradScaler(enabled=self.use_amp)
+        self.use_amp = use_amp and self.device.type == "cuda"
+        self.autocast_kwargs = {
+            "device_type": self.device.type,
+            "enabled": self.use_amp,
+        }
         if self.use_amp:
+            self.autocast_kwargs["dtype"] = torch.float16
             logger.info("Automatic Mixed Precision (AMP) enabled.")
+
+        self.scaler = None
+        if self.use_amp:
+            self.scaler = amp.GradScaler(device_type=self.device.type, enabled=True)
 
         self.model.to(self.device)
 
@@ -171,20 +179,27 @@ class TrainingLoop:
 
         for i, batch in enumerate(pbar):
             batch = self._transfer_batch_to_device(batch)
+            model_inputs = self._prepare_model_inputs(batch)
             step = (epoch - 1) * len(self.train_loader) + i
 
-            with autocast(enabled=self.use_amp):
-                outputs = self.model(**batch)
+            with amp.autocast(**self.autocast_kwargs):
+                outputs = self.model(**model_inputs)
                 loss = outputs["loss"]
                 if loss is None:
                     continue
                 loss = loss / self.grad_accum_steps
 
-            self.scaler.scale(loss).backward()
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
             if (i + 1) % self.grad_accum_steps == 0:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                if self.use_amp:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
 
             # Update progress bar with smoothed loss
@@ -229,8 +244,9 @@ class TrainingLoop:
 
         for batch in pbar:
             batch = self._transfer_batch_to_device(batch)
-            with autocast(enabled=self.use_amp):
-                outputs = self.model(**batch)
+            model_inputs = self._prepare_model_inputs(batch)
+            with amp.autocast(**self.autocast_kwargs):
+                outputs = self.model(**model_inputs)
 
             if outputs["loss"] is not None:
                 metrics_agg["loss"] += outputs["loss"].item() * len(batch["input_ids"])
@@ -273,3 +289,17 @@ class TrainingLoop:
             k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v
             for k, v in batch.items()
         }
+
+    @staticmethod
+    def _prepare_model_inputs(batch: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Filters a collated batch to only the tensors consumed by the model."""
+
+        allowed_keys = {
+            "input_ids",
+            "attention_mask",
+            "decoder_input_ids",
+            "labels",
+            "mask_positions",
+            "mask_lengths",
+        }
+        return {k: v for k, v in batch.items() if k in allowed_keys}
