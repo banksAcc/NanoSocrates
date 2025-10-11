@@ -24,12 +24,12 @@ pip install --index-url https://download.pytorch.org/whl/cu124 torch torchvision
 
 
 2) Sanity overfit (sovrascrivi qualche parametro al volo)
-python -m src.run overfit --cfg configs/train/baseline.yaml --override max_steps=500 batch_size=8 train_file=data/processed/text2rdf.train.jsonl
-python -m src.run overfit --cfg configs/train/baseline.yaml --override max_steps=500 batch_size=8
+python -m src.run overfit --cfg configs/train/multitask_default.yaml --override max_steps=500 batch_size=8
 
-python -m src.run overfit --cfg configs/train/baseline.yaml --override max_steps=300 batch_size=4 train_file=data/processed/_mini.train.jsonl val_file=data/processed/_mini.train.jsonl
+python -m src.run overfit --cfg configs/train/multitask_default.yaml --override max_steps=300 batch_size=4
 
-3) Training baseline (addestramento per un solo task)
+3) Training multitask di default (T5 compatto)
+python -m src.run train --cfg configs/train/multitask_default.yaml
+4) Variante vanilla sinusoidale (stesso mixing 3:3:2:2):
 python -m src.run train --cfg configs/train/baseline.yaml
-4) Multi-task 3:3:2:2 (tutti e 4 i task):
-python -m src.run train --cfg configs/train/mix_3322.yaml
+

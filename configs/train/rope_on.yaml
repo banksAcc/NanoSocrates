@@ -1,7 +1,25 @@
-# Ablation config: identical to baseline but reserved for RoPE positional encodings.
-train_file: "data/processed/text2rdf.train.jsonl"
-val_file: "data/processed/text2rdf.val.jsonl"
+# Multitask ablation preset enabling RoPE positional encodings.
+
 tokenizer_file: "data/vocab/bpe.json"
+
+# datasets (weights inherited from the default 3:3:2:2 schedule)
+datasets:
+  - name: "rdf2text"
+    train: "data/processed/rdf2text.train.jsonl"
+    val:   "data/processed/rdf2text.val.jsonl"
+    weight: 3
+  - name: "text2rdf"
+    train: "data/processed/text2rdf.train.jsonl"
+    val:   "data/processed/text2rdf.val.jsonl"
+    weight: 3
+  - name: "rdfcomp1"
+    train: "data/processed/rdfcomp1.train.jsonl"
+    val:   "data/processed/rdfcomp1.val.jsonl"
+    weight: 2
+  - name: "rdfcomp2"
+    train: "data/processed/rdfcomp2.train.jsonl"
+    val:   "data/processed/rdfcomp2.val.jsonl"
+    weight: 2
 
 # modello
 use_rope: true
@@ -30,7 +48,7 @@ gradient_accumulation_steps: 1
 lr: 3e-4
 weight_decay: 0.01
 warmup_steps: 2000
-save_dir: "checkpoints/rope_on"
+save_dir: "checkpoints/rope_multitask"
 seed: 42
 
 device: "cuda"
@@ -45,5 +63,5 @@ wandb:
   project: "nanosocrates"
   entity: null
   run_name: null
-  tags: ["rope"]
+  tags: ["rope", "multitask"]
   watch: false

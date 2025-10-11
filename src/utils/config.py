@@ -22,7 +22,7 @@ def load_yaml(path: str):
         return yaml.safe_load(f)
 
 def add_common_overrides(ap: argparse.ArgumentParser):
-    ap.add_argument("--cfg", required=True, help="path yaml (es. configs/train/baseline.yaml)")
+    ap.add_argument("--cfg", required=True, help="path yaml (es. configs/train/multitask_default.yaml)")
     ap.add_argument("--override", nargs="*", default=[], help="chiave=valore (facoltative)")
     ap.add_argument("--toy", action="store_true", help="Reindirizza i path dei dataset verso data/processed/toy")
 
