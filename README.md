@@ -28,7 +28,7 @@ nanosocrates/
 ├─ scripts/
 │  ├─ build_dataset.py           # crea dataset e task JSONL (richiede PYTHONPATH=src)
 │  ├─ build_toy_subset.py        # genera il sottoinsieme toy (include setup PYTHONPATH interno)
-│  ├─ eval_all.py                # valutazione multi-task
+│  ├─ eval_all.py                # wrapper compatibilità → src.run evaluate
 │  ├─ fetch_dbpedia.py           # scarica triple DBpedia (richiede PYTHONPATH=src)
 │  ├─ fetch_wikipedia.py         # scarica abstract intro (richiede PYTHONPATH=src)
 │  ├─ predict_example.py         # inference minimale da riga di comando
@@ -91,9 +91,8 @@ pip install -r requirements.txt
    ```
 5. **Valuta il checkpoint** (report JSON + metriche aggregate)
    ```bash
-   python -m scripts.eval_all --cfg configs/eval/baseline.yaml
-   # equivalente RUN unificata
    python -m src.run evaluate --cfg configs/eval/baseline.yaml --output reports/baseline_eval.json
+   # legacy wrapper → python -m scripts.eval_all --cfg configs/eval/baseline.yaml
    ```
 
 ### 2.3 Tutorial — sottoinsieme toy (20 film)
@@ -147,7 +146,8 @@ pip install -r requirements.txt
    fallisce viene eseguito automaticamente il fallback in modalità offline.
 2. Per loggare anche la valutazione usa lo stesso approccio:
    ```bash
-   python -m scripts.eval_all --cfg configs/eval/baseline.yaml --override wandb.mode=online wandb.project=nanosocrates-demo
+   python -m src.run evaluate --cfg configs/eval/baseline.yaml --override \
+       wandb.mode=online wandb.project=nanosocrates-demo --output reports/baseline_eval.json
    ```
    Le metriche vengono appiattite tramite `src.utils.wandb_utils.flatten_eval_metrics`
    e inviate come singolo step alla run già configurata.
@@ -269,16 +269,13 @@ con percorsi `val`/`test` per ciascun task, parametri di decoding e destinazione
 del report JSON. Per eseguire una valutazione completa:
 
 ```bash
-python -m scripts.eval_all --cfg configs/eval/baseline.yaml
-```
-
-Lo script genera un report strutturato (stampato a terminale e salvato su disco)
-ed effettua l'eventuale logging su Weights & Biases se abilitato nel config.
-Lo stesso comportamento è disponibile dal RUN unificato:
-
-```bash
 python -m src.run evaluate --cfg configs/eval/baseline.yaml --output reports/eval.json
 ```
+
+Il comando genera un report strutturato (stampato a terminale e salvato su disco)
+ed effettua l'eventuale logging su Weights & Biases se abilitato nel config.
+Per retrocompatibilità rimane disponibile anche `python -m scripts.eval_all`,
+che reindirizza automaticamente verso il subcomando `evaluate`.
 
 ### 8.2 Inference manuale
 
