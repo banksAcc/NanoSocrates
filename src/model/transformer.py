@@ -88,6 +88,7 @@ class TinySeq2Seq(nn.Module):
         super().__init__()
         self.pad_id = pad_id
         self.compute_span_metrics = bool(compute_span_metrics)
+        self.max_position_embeddings = int(max_position_embeddings)
         arch = (architecture or "vanilla").lower()
         if arch not in {"vanilla", "t5"}:
             raise ValueError("architecture must be 'vanilla' or 't5'")
@@ -150,10 +151,33 @@ class TinySeq2Seq(nn.Module):
         if tie_embeddings:
             self.lm_head.weight = self.emb.weight
 
+        self._checkpoint_config = {
+            "d_model": int(d_model),
+            "nhead": int(nhead),
+            "enc_layers": int(num_encoder_layers),
+            "dec_layers": int(num_decoder_layers),
+            "ff_dim": int(dim_feedforward),
+            "dropout": float(dropout),
+            "use_mla": bool(use_mla),
+            "use_rope": bool(use_rope),
+            "interleave_ratio": float(interleave_ratio),
+            "max_len": int(max_position_embeddings),
+            "compute_span_metrics": bool(compute_span_metrics),
+            "architecture": self.architecture,
+            "relative_attention_num_buckets": int(relative_attention_num_buckets),
+            "relative_attention_max_distance": int(relative_attention_max_distance),
+            "layer_norm_epsilon": float(layer_norm_epsilon),
+        }
+
     @staticmethod
     def _subsequent_mask(sz: int, device: torch.device) -> torch.Tensor:
         """Generates a causal mask for the decoder."""
         return torch.triu(torch.ones(sz, sz, dtype=torch.bool, device=device), 1)
+
+    def export_config(self) -> dict[str, object]:
+        """Returns the minimal configuration required to rebuild the model."""
+
+        return dict(self._checkpoint_config)
 
     def forward(
         self,

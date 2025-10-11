@@ -77,6 +77,7 @@ class TrainingLoop:
         self.scheduler = scheduler
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self._train_loader_len = len(train_loader)
         self.grad_accum_steps = grad_accum_steps
         self.log_every_n_steps = log_every_n_steps
         self.checkpoint_path = checkpoint_path
@@ -109,13 +110,13 @@ class TrainingLoop:
         self.scaler = None
         if self.use_amp:
             try:
-                self.scaler = amp.GradScaler(device=self.device.type, enabled=True)
+                self.scaler = amp.GradScaler(device_type=self.device.type, enabled=True)
             except TypeError:
                 # Older PyTorch versions expect the legacy signature without the
                 # device argument. Fall back gracefully so training still works.
                 self.scaler = amp.GradScaler(enabled=True)
         self.model.to(self.device)
-
+        
     def run(self, num_epochs: int) -> dict[str, Any]:
         """Starts and manages the training process for a given number of epochs.
 
@@ -126,6 +127,12 @@ class TrainingLoop:
             A dictionary containing the best score achieved and the epoch at which
             it occurred.
         """
+        if self._train_loader_len == 0:
+            raise ValueError(
+                "Training DataLoader is empty. Check the dataset paths or preprocessing "
+                "pipeline for the selected configuration."
+            )
+
         logger.info("Starting training...")
         for epoch in range(1, num_epochs + 1):
             logger.info(f"Epoch {epoch}/{num_epochs}")
@@ -184,8 +191,7 @@ class TrainingLoop:
         for i, batch in enumerate(pbar):
             batch = self._transfer_batch_to_device(batch)
             model_inputs = self._prepare_model_inputs(batch)
-            step = (epoch - 1) * len(self.train_loader) + i
-
+            step = (epoch - 1) * self._train_loader_len + i  
             with amp.autocast(**self.autocast_kwargs):
                 outputs = self.model(**model_inputs)
                 loss = outputs["loss"]
@@ -225,7 +231,7 @@ class TrainingLoop:
                         log_data[f"train/{k}"] = v
                 self.wandb_run.log(log_data, step=step)
 
-        avg_loss = total_loss / len(self.train_loader)
+        avg_loss = total_loss / self._train_loader_len
         return {"loss": avg_loss}
 
     @torch.inference_mode()
@@ -261,6 +267,12 @@ class TrainingLoop:
 
             total_count += len(batch["input_ids"])
 
+        if total_count == 0:
+            logger.warning(
+                "Validation DataLoader produced no batches; returning empty metrics."
+            )
+            return {}
+
         # Average the metrics over the entire dataset
         avg_metrics = {k: v / total_count for k, v in metrics_agg.items()}
         return avg_metrics
@@ -280,7 +292,16 @@ class TrainingLoop:
             self.best_score = current_score
             self.es_counter = 0
             logger.info(f"New best score: {self.best_score:.4f}. Saving model...")
-            torch.save(self.model.state_dict(), self.checkpoint_path)
+
+            checkpoint: dict[str, object] = {"model": self.model.state_dict()}
+            export_fn = getattr(self.model, "export_config", None)
+            if callable(export_fn):
+                try:
+                    checkpoint["config"] = export_fn()
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    logger.warning("Unable to export model config for checkpoint: %s", exc)
+
+            torch.save(checkpoint, self.checkpoint_path)
         else:
             self.es_counter += 1
             logger.info(f"No improvement. Early stopping counter: {self.es_counter}/{self.es_patience}")
