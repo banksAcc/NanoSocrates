@@ -4,10 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
 from src.eval.evaluate import evaluate_from_config
-from src.utils.config import add_common_overrides, apply_overrides, apply_toy_paths, load_yaml
+from src.utils.config import (
+    add_common_overrides,
+    apply_overrides,
+    apply_toy_paths,
+    load_yaml,
+)
 from src.utils.wandb_utils import flatten_eval_metrics, maybe_init_wandb
 
 
@@ -34,13 +39,34 @@ def _print_report(report: Dict[str, object]):
                 print(f"        samples={vals.get('samples', 0)}")
 
 
+def _maybe_swap_to_eval_config(cfg_path: Path, cfg: Dict[str, object]) -> Tuple[Path, Dict[str, object]]:
+    """Se viene passato un config di training prova a usare l'equivalente di valutazione."""
+
+    if cfg and ("checkpoint" in cfg or "tasks" in cfg or "datasets" in cfg):
+        return cfg_path, cfg
+
+    if cfg_path.parent.name == "train":
+        candidate = Path("configs") / "eval" / cfg_path.name
+        if candidate.exists():
+            print(
+                f"[info] Il config {cfg_path} sembra essere di training. "
+                f"Uso {candidate} per la valutazione."
+            )
+            return candidate, load_yaml(candidate)
+
+    return cfg_path, cfg
+
+
 def main():
     ap = argparse.ArgumentParser(description="Valutazione multi-task")
     add_common_overrides(ap)
     ap.add_argument("--output", help="File JSON per salvare il report", default=None)
     args = ap.parse_args()
 
-    cfg = load_yaml(args.cfg)
+    cfg_path = Path(args.cfg)
+    cfg = load_yaml(cfg_path)
+
+    cfg_path, cfg = _maybe_swap_to_eval_config(cfg_path, cfg)
     if getattr(args, "toy", False):
         cfg = apply_toy_paths(cfg)
         print("[toy] dataset paths → data/processed/toy")
@@ -48,7 +74,7 @@ def main():
 
     output_path = args.output or cfg.get("output_json")
     if output_path is None:
-        output_path = Path(args.cfg).with_suffix(".report.json")
+        output_path = cfg_path.with_suffix(".report.json")
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

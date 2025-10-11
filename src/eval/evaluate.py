@@ -48,7 +48,12 @@ def _load_model_from_checkpoint(
 
     overrides = dict(overrides or {})
     ckpt = torch.load(checkpoint_path, map_location=device)
-    saved_cfg: MutableMapping[str, object] = dict(ckpt.get("config", {}))
+    if isinstance(ckpt, Mapping):
+        saved_cfg: MutableMapping[str, object] = dict(ckpt.get("config", {}))
+        state_dict = ckpt.get("model", ckpt)
+    else:
+        saved_cfg = {}
+        state_dict = ckpt
     saved_cfg.update(overrides)
 
     required = ["d_model", "nhead", "enc_layers", "dec_layers", "ff_dim", "dropout"]
@@ -78,7 +83,7 @@ def _load_model_from_checkpoint(
         relative_attention_max_distance=int(saved_cfg.get("relative_attention_max_distance", 128)),
         layer_norm_epsilon=float(saved_cfg.get("layer_norm_epsilon", 1e-6)),
     ).to(device)
-    model.load_state_dict(ckpt["model"])
+    model.load_state_dict(state_dict)
     model.eval()
     return model, dict(saved_cfg)
 
