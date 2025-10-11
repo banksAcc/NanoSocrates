@@ -1,8 +1,9 @@
-"""Entry point per addestrare o forzare l'overfit del modello NanoSocrates."""
+"""Entry point per addestrare, valutare o forzare l'overfit del modello."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import math
 import random
@@ -13,6 +14,7 @@ import numpy as np
 import torch
 from tokenizers import Tokenizer
 
+from src.eval.evaluate import evaluate_from_config
 from src.data.builders import build_and_cache_datasets
 from src.model.transformer import TinySeq2Seq
 from src.training.dataloaders import create_multitask_dataloader
@@ -24,7 +26,7 @@ from src.utils.config import (
     apply_toy_paths,
     load_yaml,
 )
-from src.utils.wandb_utils import maybe_init_wandb
+from src.utils.wandb_utils import flatten_eval_metrics, maybe_init_wandb
 
 LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +109,52 @@ def _prepare_config(args: argparse.Namespace) -> Dict[str, Any]:
         LOGGER.info("[toy] uso i dataset compatti in data/processed/toy")
     cfg = apply_overrides(cfg, args.override)
     return cfg
+
+
+def _maybe_swap_to_eval_config(cfg_path: Path, cfg: Dict[str, Any] | None) -> Path:
+    """Ritorna il config di valutazione equivalente a quello di training se presente."""
+
+    if cfg and ("checkpoint" in cfg or "tasks" in cfg or "datasets" in cfg):
+        return cfg_path
+    if cfg_path.parent.name == "train":
+        candidate = Path("configs") / "eval" / cfg_path.name
+        if candidate.exists():
+            LOGGER.info(
+                "Config di training rilevato (%s): uso %s per la valutazione.",
+                cfg_path,
+                candidate,
+            )
+            return candidate
+    return cfg_path
+
+
+def _print_report(report: Dict[str, object]) -> None:
+    print("=== Evaluation Report ===")
+    for split_name, split_payload in report.get("splits", {}).items():
+        print(f"\n[{split_name}]")
+        tasks_payload = split_payload.get("tasks", {}) if isinstance(split_payload, dict) else {}
+        if not tasks_payload:
+            print("  (nessun task)")
+            continue
+        if "avg_loss" in split_payload:
+            print(f"  avg_loss: {split_payload['avg_loss']:.4f}")
+        for task_name, task_payload in tasks_payload.items():
+            loss = task_payload.get("loss") if isinstance(task_payload, dict) else None
+            samples = task_payload.get("num_samples", 0) if isinstance(task_payload, dict) else 0
+            if loss is not None:
+                print(f"  - {task_name} (n={samples}) loss={loss:.4f}")
+            else:
+                print(f"  - {task_name} (n={samples})")
+            metrics = task_payload.get("metrics", {}) if isinstance(task_payload, dict) else {}
+            for inner_task, vals in metrics.items():
+                numbers = [
+                    f"{metric_name}={vals[metric_name]:.2f}"
+                    for metric_name in sorted(vals)
+                    if metric_name != "samples"
+                ]
+                if numbers:
+                    print(f"      · {inner_task}: {', '.join(numbers)}")
+                print(f"        samples={vals.get('samples', 0)}")
 
 
 def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
@@ -215,6 +263,44 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     run_training(cfg, overfit=True)
 
 
+def cmd_evaluate(args: argparse.Namespace) -> None:
+    cfg_path = Path(args.cfg)
+    raw_cfg = load_yaml(cfg_path)
+    effective_cfg_path = _maybe_swap_to_eval_config(cfg_path, raw_cfg)
+    args_dict = vars(args).copy()
+    args_dict["cfg"] = str(effective_cfg_path)
+    args = argparse.Namespace(**args_dict)
+
+    cfg = _prepare_config(args)
+
+    output_path = args.output or cfg.get("output_json")
+    if output_path is None:
+        output_path = effective_cfg_path.with_suffix(".report.json")
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    wandb_run, wandb_module = maybe_init_wandb(cfg)
+    try:
+        report = evaluate_from_config(cfg)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        LOGGER.info("Report salvato in %s", output_path.resolve())
+        _print_report(report)
+
+        if wandb_run is not None:
+            flat_metrics = flatten_eval_metrics(report)
+            try:
+                wandb_run.log(flat_metrics)
+            except Exception as exc:  # pragma: no cover - logging best effort
+                LOGGER.warning("Log su Weights & Biases fallito: %s", exc)
+    finally:
+        if wandb_run is not None and wandb_module is not None:
+            try:
+                wandb_module.finish()
+            except Exception as exc:  # pragma: no cover - dipende da env
+                LOGGER.warning("Chiusura wandb fallita: %s", exc)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pipeline di training NanoSocrates")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -224,6 +310,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_overfit = sub.add_parser("overfit", help="Forza l'overfit di un singolo batch")
     add_common_overrides(p_overfit)
+
+    p_eval = sub.add_parser("evaluate", help="Valuta un checkpoint sui task indicati")
+    add_common_overrides(p_eval)
+    p_eval.add_argument("--output", help="File JSON per salvare il report", default=None)
 
     return parser
 
@@ -235,6 +325,8 @@ def main() -> None:
         cmd_train(args)
     elif args.command == "overfit":
         cmd_overfit(args)
+    elif args.command == "evaluate":
+        cmd_evaluate(args)
     else:  # pragma: no cover - guardia difensiva
         raise ValueError(f"Comando sconosciuto: {args.command}")
 
