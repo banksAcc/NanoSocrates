@@ -22,6 +22,8 @@ CHECKPOINT_ALIASES = {
 """Mappa alias→path per i checkpoint salvati più comuni."""
 
 def _transform_processed_paths(node, prefix: str, toy_prefix: str):
+    """Recursively replace ``prefix`` with ``toy_prefix`` for JSONL dataset paths."""
+
     if isinstance(node, dict):
         return {k: _transform_processed_paths(v, prefix, toy_prefix) for k, v in node.items()}
     if isinstance(node, list):
@@ -33,7 +35,10 @@ def _transform_processed_paths(node, prefix: str, toy_prefix: str):
             return toy_prefix + node[len(prefix):]
     return node
 
+
 def load_yaml(path: str):
+    """Load a YAML configuration file returning the parsed Python object."""
+
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -66,26 +71,35 @@ def resolve_checkpoint_reference(cfg: Dict[str, object]) -> Dict[str, object]:
     )
 
 def add_common_overrides(ap: argparse.ArgumentParser):
+    """Attach shared CLI arguments to training/evaluation sub-commands."""
+
     ap.add_argument("--cfg", required=True, help="path yaml (es. configs/train/multitask_default.yaml)")
     ap.add_argument("--override", nargs="*", default=[], help="chiave=valore (facoltative)")
     ap.add_argument("--toy", action="store_true", help="Reindirizza i path dei dataset verso data/processed/toy")
 
+
 def apply_overrides(cfg: dict, kv_list):
+    """Apply CLI ``key=value`` overrides to nested dictionaries in *cfg*."""
+
     for kv in kv_list:
         k, v = kv.split("=", 1)
-        # prova a castare numeri/bool
-        if v.lower() in ("true", "false"): v = v.lower() == "true"
+        # Attempt to coerce booleans/numbers so configs remain strongly typed.
+        if v.lower() in ("true", "false"):
+            v = v.lower() == "true"
         else:
             try:
-                if "." in v: v = float(v)
-                else: v = int(v)
-            except: pass
-        # supporto chiavi annidate a punto
+                v = float(v) if "." in v else int(v)
+            except ValueError:
+                pass
+
+        # Support dot-separated keys to override nested dictionaries.
         cur, *rest = k.split(".")
         node = cfg
         while rest:
-            if cur not in node: node[cur] = {}
-            node = node[cur]; cur, *rest = rest
+            if cur not in node:
+                node[cur] = {}
+            node = node[cur]
+            cur, *rest = rest
         node[cur] = v
     return cfg
 

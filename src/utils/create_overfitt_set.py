@@ -1,10 +1,23 @@
-import json, itertools
-src = "data/processed/rdf2text.train.jsonl"
-dst = "data/processed/_mini.train.jsonl"
-with open(src, "r", encoding="utf-8") as f:
-    first = json.loads(next(f))
-with open(dst, "w", encoding="utf-8") as g:
-    for i in range(256):
-        r = dict(first); r["id"] = f"mini-{i}"
-        g.write(json.dumps(r, ensure_ascii=False) + "\n")
-print("Wrote", dst)
+"""Quick helper to duplicate a single JSONL example into a tiny overfit set."""
+
+import json
+
+SRC = "data/processed/rdf2text.train.jsonl"
+DST = "data/processed/_mini.train.jsonl"
+
+
+def main() -> None:
+    """Materialise 256 copies of the first training example for smoke tests."""
+
+    with open(SRC, "r", encoding="utf-8") as fh:
+        first = json.loads(next(fh))
+    with open(DST, "w", encoding="utf-8") as out:
+        for i in range(256):
+            record = dict(first)
+            record["id"] = f"mini-{i}"
+            out.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print("Wrote", DST)
+
+
+if __name__ == "__main__":
+    main()

@@ -56,7 +56,6 @@ def create_scheduler(
     min_lr_ratio: float = 0.0,
 ) -> torch.optim.lr_scheduler.LambdaLR:
     """Creates a `LambdaLR` scheduler with warmup and decay.
-
     This factory function simplifies the creation of standard learning rate
     schedulers used in NLP.
 

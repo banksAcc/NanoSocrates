@@ -8,7 +8,8 @@ import argparse
 from src.utils.io import write_jsonl
 from src.data.dbpedia import fetch_triples
 
-def main():
+def main() -> None:
+    """Fetch triples from DBpedia according to the YAML configuration."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, help="configs/data/dbpedia.yaml")
     ap.add_argument("--out", required=True, help="path JSONL per output triple")

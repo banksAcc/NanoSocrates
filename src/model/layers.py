@@ -18,7 +18,6 @@ import torch.nn.functional as F
 
 class SinusoidalPE(nn.Module):
     """Standard sinusoidal positional encoding.
-
     This module injects information about the relative or absolute position of
     tokens in the sequence. The positional encodings have the same dimension as
     the embeddings so that they can be summed. The implementation is based on
@@ -30,7 +29,6 @@ class SinusoidalPE(nn.Module):
 
     def __init__(self, d_model: int, max_len: int = 2048):
         """Initializes the SinusoidalPE module.
-
         Args:
             d_model: The dimensionality of the embeddings.
             max_len: The maximum sequence length that this model might ever see.
@@ -50,7 +48,6 @@ class SinusoidalPE(nn.Module):
 
     def _ensure_pe(self, seq_len: int) -> None:
         """Extends the cached encodings to cover ``seq_len`` tokens if needed."""
-
         cached = self.pe.size(1)
         if seq_len <= cached:
             return
@@ -67,7 +64,6 @@ class SinusoidalPE(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Adds positional encoding to the input tensor.
-
         Args:
             x: The input tensor of embeddings.
                Shape: (batch_size, seq_len, d_model)
@@ -87,7 +83,6 @@ class SinusoidalPE(nn.Module):
 
 class RotaryEmbedding(nn.Module):
     """Rotary positional embeddings (RoPE).
-
     RoPE encodes absolute position information with a rotation matrix and naturally
     incorporates explicit relative position dependency in self-attention. It has
     become a popular choice in modern language models like LLaMA.
@@ -103,7 +98,6 @@ class RotaryEmbedding(nn.Module):
         base: int = 10000,
     ) -> None:
         """Initializes the RotaryEmbedding module.
-
         Args:
             dim: The dimension of the rotary embeddings, typically `head_dim`.
             max_position_embeddings: The maximum sequence length for pre-computing
@@ -134,7 +128,6 @@ class RotaryEmbedding(nn.Module):
         self, seq_len: int, device: torch.device, dtype: torch.dtype
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Retrieves or re-computes the cos/sin caches for a given sequence length.
-
         If `seq_len` exceeds the cached length, the cache is rebuilt with a
         slightly larger size to avoid frequent re-computation.
 
@@ -167,7 +160,6 @@ def apply_rotary_pos_emb(
     tensor: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 ) -> torch.Tensor:
     """Applies rotary positional embeddings to the input tensor.
-
     Args:
         tensor: The input tensor (query or key).
                 Shape: (batch, n_heads, seq_len, head_dim)
@@ -185,14 +177,12 @@ def apply_rotary_pos_emb(
 
 class ScaledDotProductAttention(nn.Module):
     """Computes scaled dot-product attention.
-
     This is the core component of the multi-head attention mechanism, calculating
     attention scores and producing the weighted sum of values.
     """
 
     def __init__(self, head_dim: int, dropout: float = 0.0) -> None:
         """Initializes the ScaledDotProductAttention module.
-
         Args:
             head_dim: The dimensionality of each attention head.
             dropout: The dropout rate applied to the attention weights.
@@ -210,7 +200,6 @@ class ScaledDotProductAttention(nn.Module):
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Performs the scaled dot-product attention.
-
         Args:
             query: Query tensor. Shape: (batch, n_heads, q_len, head_dim)
             key: Key tensor. Shape: (batch, n_heads, k_len, head_dim)
@@ -246,7 +235,6 @@ class ScaledDotProductAttention(nn.Module):
 
 class MultiLinearAttention(nn.Module):
     """A lightweight multi-linear attention approximation.
-
     This module implements a feature map similar to Performer's, using `elu + 1`.
     It is intended for ablation experiments and offers a linear complexity
     alternative to standard softmax attention. It should not be used with masks
@@ -255,7 +243,6 @@ class MultiLinearAttention(nn.Module):
 
     def __init__(self, head_dim: int, dropout: float = 0.0) -> None:
         """Initializes the MultiLinearAttention module.
-
         Args:
             head_dim: The dimensionality of each attention head.
             dropout: The dropout rate applied to the output.
@@ -273,7 +260,6 @@ class MultiLinearAttention(nn.Module):
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Performs the multi-linear attention computation.
-
         Args:
             query: Query tensor. Shape: (batch, n_heads, q_len, head_dim)
             key: Key tensor. Shape: (batch, n_heads, k_len, head_dim)
@@ -300,7 +286,6 @@ class MultiLinearAttention(nn.Module):
 
 class HybridAttention(nn.Module):
     """A flexible multi-head attention module.
-
     This module combines several features:
     - Standard scaled dot-product attention.
     - Optional Rotary Positional Embeddings (RoPE).
@@ -319,7 +304,6 @@ class HybridAttention(nn.Module):
         max_position_embeddings: int = 2048,
     ) -> None:
         """Initializes the HybridAttention module.
-
         Args:
             d_model: The total dimensionality of the input.
             num_heads: The number of attention heads.
@@ -378,7 +362,6 @@ class HybridAttention(nn.Module):
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Performs the hybrid attention forward pass.
-
         Args:
             query: Query tensor. Shape: (batch, q_len, d_model)
             key: Key tensor. Shape: (batch, k_len, d_model)
@@ -420,8 +403,8 @@ class HybridAttention(nn.Module):
 
 class PositionwiseFeedForward(nn.Module):
     """A standard position-wise feed-forward network."""
-
     def __init__(self, d_model: int, dim_feedforward: int, dropout: float) -> None:
+        """Initialise the two-layer feed-forward network with GELU activation."""
         super().__init__()
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -429,12 +412,12 @@ class PositionwiseFeedForward(nn.Module):
         self.activation = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the feed-forward transformation and dropout."""
         return self.linear2(self.dropout(self.activation(self.linear1(x))))
 
 
 class TransformerEncoderLayer(nn.Module):
     """A single layer of the custom Transformer encoder."""
-
     def __init__(
         self,
         d_model: int,
@@ -447,6 +430,7 @@ class TransformerEncoderLayer(nn.Module):
         use_rope: bool,
         max_position_embeddings: int,
     ) -> None:
+        """Configure attention and feed-forward blocks for the encoder layer."""
         super().__init__()
         self.self_attn = HybridAttention(
             d_model,
@@ -469,6 +453,7 @@ class TransformerEncoderLayer(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Run self-attention followed by the feed-forward network."""
         # Pre-LN is more common in modern transformers, but this follows Post-LN
         # from the original paper, consistent with nn.Transformer.
         # x -> Self-Attention -> Add & Norm
@@ -486,7 +471,6 @@ class TransformerEncoderLayer(nn.Module):
 
 class TransformerDecoderLayer(nn.Module):
     """A single layer of the custom Transformer decoder."""
-
     def __init__(
         self,
         d_model: int,
@@ -499,6 +483,7 @@ class TransformerDecoderLayer(nn.Module):
         use_rope: bool,
         max_position_embeddings: int,
     ) -> None:
+        """Create the decoder layer components for masked and cross attention."""
         super().__init__()
         self.self_attn = HybridAttention(
             d_model, nhead, dropout, use_rope=use_rope, max_position_embeddings=max_position_embeddings,
@@ -522,6 +507,7 @@ class TransformerDecoderLayer(nn.Module):
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         memory_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Apply masked self-attention, cross-attention, then feed-forward."""
         x = tgt
         # Masked Self-Attention
         attn_out = self.self_attn(
@@ -543,7 +529,6 @@ class TransformerDecoderLayer(nn.Module):
 
 class CustomTransformer(nn.Module):
     """A custom Transformer encoder-decoder stack.
-
     This module provides an interface similar to `nn.Transformer` but is built
     using the custom `TransformerEncoderLayer` and `TransformerDecoderLayer`,
     allowing for features like RoPE and MLA.
@@ -563,6 +548,7 @@ class CustomTransformer(nn.Module):
         use_rope: bool,
         max_position_embeddings: int,
     ) -> None:
+        """Stack custom encoder and decoder layers with optional MLA/RoPE."""
         super().__init__()
         self.encoder_layers = nn.ModuleList(
             [
@@ -593,6 +579,7 @@ class CustomTransformer(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Run the encoder stack and apply the final layer norm."""
         output = src
         for layer in self.encoder_layers:
             output = layer(output, src_mask=src_mask, src_key_padding_mask=src_key_padding_mask)
@@ -606,6 +593,7 @@ class CustomTransformer(nn.Module):
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         memory_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Run the decoder stack conditioning on encoder outputs."""
         output = tgt
         for layer in self.decoder_layers:
             output = layer(
@@ -623,7 +611,6 @@ class CustomTransformer(nn.Module):
 
 class RelativePositionBias(nn.Module):
     """Implements T5-style relative position bias with bucketing.
-
     This allows the model to learn position-dependent attention biases without
     relying on absolute positional encodings.
     """
@@ -636,6 +623,7 @@ class RelativePositionBias(nn.Module):
         *,
         bidirectional: bool = True,
     ) -> None:
+        """Initialise learnable bias buckets for relative attention positions."""
         super().__init__()
         if num_buckets <= 0 or num_heads <= 0:
             raise ValueError("num_buckets and num_heads must be positive")
@@ -692,7 +680,6 @@ class RelativePositionBias(nn.Module):
         dtype: torch.dtype,
     ) -> torch.Tensor:
         """Computes the relative position bias tensor.
-
         Returns:
             A tensor of shape (1, num_heads, query_length, key_length)
         """
@@ -708,7 +695,6 @@ class RelativePositionBias(nn.Module):
 
 class T5Attention(nn.Module):
     """T5-style multi-head self-attention.
-
     This version uses pre-LayerNorm (as is standard in T5) and supports
     relative position biases. Projections (q, k, v, out) are bias-free.
     """
@@ -721,6 +707,7 @@ class T5Attention(nn.Module):
         *,
         relative_bias: Optional[RelativePositionBias] = None,
     ) -> None:
+        """Set up the bias-free projections and optional position bias modules."""
         super().__init__()
         if d_model % num_heads != 0:
             raise ValueError("d_model must be divisible by num_heads")
@@ -755,7 +742,6 @@ class T5Attention(nn.Module):
         position_bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Performs the T5 attention forward pass.
-
         Args:
             hidden_states: Input tensor. Shape: (batch, seq_len, d_model)
             key_value_states: Optional key/value states for cross-attention.
@@ -811,8 +797,8 @@ class T5Attention(nn.Module):
 
 class T5FeedForward(nn.Module):
     """T5-style gated feed-forward network (Gated GELU)."""
-
     def __init__(self, d_model: int, dim_feedforward: int, dropout: float) -> None:
+        """Create the pair of projections and gating activation used in T5."""
         super().__init__()
         # T5 uses a wider intermediate layer for the gating mechanism
         self.wi_0 = nn.Linear(d_model, dim_feedforward, bias=False)
@@ -822,6 +808,7 @@ class T5FeedForward(nn.Module):
         self.activation = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the gated feed-forward transformation with dropout."""
         gate = self.activation(self.wi_0(x))
         hidden = self.wi_1(x)
         gated = gate * hidden
@@ -830,7 +817,6 @@ class T5FeedForward(nn.Module):
 
 class T5EncoderLayer(nn.Module):
     """A single layer of the T5 encoder, using Pre-LayerNorm."""
-
     def __init__(
         self,
         d_model: int,
@@ -841,6 +827,7 @@ class T5EncoderLayer(nn.Module):
         layer_norm_epsilon: float,
         relative_bias: RelativePositionBias,
     ) -> None:
+        """Configure a Pre-LN encoder layer matching the original T5 design."""
         super().__init__()
         self.self_attn = T5Attention(d_model, nhead, dropout, relative_bias=relative_bias)
         self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
@@ -854,6 +841,7 @@ class T5EncoderLayer(nn.Module):
         *,
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Apply LayerNorm, self-attention and feed-forward blocks in sequence."""
         # Pre-LN: Norm -> Attention -> Add
         normed = self.norm1(hidden_states)
         attn_out = self.self_attn(normed, key_padding_mask=key_padding_mask)
@@ -868,7 +856,6 @@ class T5EncoderLayer(nn.Module):
 
 class T5DecoderLayer(nn.Module):
     """A single layer of the T5 decoder, using Pre-LayerNorm."""
-
     def __init__(
         self,
         d_model: int,
@@ -879,6 +866,7 @@ class T5DecoderLayer(nn.Module):
         layer_norm_epsilon: float,
         self_relative_bias: RelativePositionBias,
     ) -> None:
+        """Initialise the decoder layer with separate self/cross attention modules."""
         super().__init__()
         self.self_attn = T5Attention(d_model, nhead, dropout, relative_bias=self_relative_bias)
         self.cross_attn = T5Attention(d_model, nhead, dropout, relative_bias=None)
@@ -897,6 +885,7 @@ class T5DecoderLayer(nn.Module):
         self_attn_mask: Optional[torch.Tensor] = None,
         cross_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Run masked self-attention, cross-attention and feed-forward layers."""
         # Masked Self-Attention (Pre-LN)
         normed = self.norm1(hidden_states)
         self_attn_out = self.self_attn(
@@ -924,7 +913,6 @@ class T5DecoderLayer(nn.Module):
 
 class T5Transformer(nn.Module):
     """A T5-style Transformer encoder-decoder stack."""
-
     def __init__(
         self,
         d_model: int,
@@ -938,6 +926,7 @@ class T5Transformer(nn.Module):
         relative_attention_max_distance: int,
         layer_norm_epsilon: float = 1e-6,
     ) -> None:
+        """Construct the full T5-style encoder and decoder stacks."""
         super().__init__()
         # Encoder uses bidirectional relative positions, decoder uses unidirectional
         encoder_bias = RelativePositionBias(
@@ -972,6 +961,7 @@ class T5Transformer(nn.Module):
         *,
         key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Pass encoder inputs through all layers and the final LayerNorm."""
         output = src
         for layer in self.encoder_layers:
             output = layer(output, key_padding_mask=key_padding_mask)
@@ -988,6 +978,7 @@ class T5Transformer(nn.Module):
         self_attn_mask: Optional[torch.Tensor] = None,
         cross_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Run decoder layers conditioned on encoder memory and mask inputs."""
         output = tgt
         for layer in self.decoder_layers:
             output = layer(

@@ -53,6 +53,7 @@ def _load_pairs(path: Path) -> Dict[str, dict]:
 
 
 def _load_splits(path: Path) -> Dict[str, List[str]]:
+    """Load split definitions and ensure all expected splits are present."""
     with open(path, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
     # normalizza: assicura che gli split richiesti esistano anche se vuoti
@@ -106,6 +107,7 @@ def _evenly_pick(entries: Sequence[dict], k: int) -> List[str]:
 
 
 def _compute_split_allocation(split_sizes: Dict[str, int], total_needed: int) -> Dict[str, int]:
+    """Distribute the ``total_needed`` films proportionally across splits."""
     total_films = sum(split_sizes.values())
     if total_films == 0:
         raise ValueError("Nessun film disponibile nei JSONL sorgente")
@@ -157,6 +159,7 @@ def _compute_split_allocation(split_sizes: Dict[str, int], total_needed: int) ->
 def _rebalance_for_minimums(
     allocations: Dict[str, int], split_sizes: Dict[str, int], total_needed: int
 ) -> Dict[str, int]:
+    """Ensure each split receives the minimum viable number of examples."""
     desired_min = {
         "val": min(4, split_sizes.get("val", 0)),
         "test": min(4, split_sizes.get("test", 0)),
@@ -197,6 +200,7 @@ def _rebalance_for_minimums(
 
 
 def select_films(pairs_path: Path, splits_path: Path, total_films: int) -> Dict[str, List[str]]:
+    """Pick a balanced subset of films based on the original splits."""
     pairs = _load_pairs(pairs_path)
     splits = _load_splits(splits_path)
     split_sizes = {split: sum(1 for film in films if film in pairs) for split, films in splits.items()}
@@ -215,6 +219,7 @@ def select_films(pairs_path: Path, splits_path: Path, total_films: int) -> Dict[
 
 
 def _filter_records(source_path: Path, dest_path: Path, keep_films: Set[str]) -> int:
+    """Filter *source_path* retaining only films listed in *keep_films*."""
     if not source_path.exists():
         LOGGER.warning("File sorgente mancante: %s", source_path)
         return 0
@@ -229,6 +234,7 @@ def dump_toy_dataset(
     selected: Dict[str, List[str]],
     tasks: Sequence[str],
 ) -> Dict[str, Dict[str, int]]:
+    """Create toy JSONL files for the selected films and report counts."""
     out_dir.mkdir(parents=True, exist_ok=True)
     counts: Dict[str, Dict[str, int]] = {}
     for task in tasks:
@@ -244,6 +250,7 @@ def dump_toy_dataset(
 
 
 def write_manifest(out_dir: Path, selected: Dict[str, List[str]], counts: Dict[str, Dict[str, int]], source_root: Path):
+    """Persist metadata about the toy dataset to ``manifest.json``."""
     payload = {
         "total_films": sum(len(v) for v in selected.values()),
         "per_split": {split: sorted(films) for split, films in selected.items()},
@@ -257,6 +264,7 @@ def write_manifest(out_dir: Path, selected: Dict[str, List[str]], counts: Dict[s
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the toy dataset generator."""
     ap = argparse.ArgumentParser(description="Costruisci il toy set a 20 film")
     ap.add_argument("--pairs", default="data/interim/pairs.all.jsonl", help="JSONL completo con text+triples per film")
     ap.add_argument("--splits", default="data/interim/splits.json", help="Split originale (JSON)")
@@ -267,7 +275,8 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def main():
+def main() -> None:
+    """Coordinate film selection, dataset dumping and manifest generation."""
     args = parse_args()
     pairs_path = Path(args.pairs)
     splits_path = Path(args.splits)

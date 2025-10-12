@@ -12,7 +12,6 @@ def _align_logits_and_labels(
     logits: torch.Tensor, labels: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Ensures logits and labels are aligned for loss computation.
-
     In a typical teacher-forcing setup, the decoder input is `labels[:, :-1]`,
     producing logits that align with `labels[:, 1:]`. This function handles
     that alignment.
@@ -50,7 +49,6 @@ def _compute_span_accuracy(
     mask_lengths: Optional[torch.Tensor],
 ) -> Optional[float]:
     """Computes exact match accuracy for specified token spans.
-
     This metric is primarily used for the 'RDF Completion 1' task, where the
     model must predict a masked-out span of tokens.
 
@@ -103,7 +101,6 @@ def sequence_loss_with_span_metrics(
     compute_metrics: bool = False,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """Computes cross-entropy loss and optional span-based accuracy.
-
     Args:
         logits: The raw output from the model.
         labels: The ground truth labels.

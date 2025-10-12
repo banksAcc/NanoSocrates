@@ -13,12 +13,14 @@ from src.data.serialization import parse_rdf
 
 
 def _tokenize(text: str) -> List[str]:
+    """Split *text* into whitespace tokens handling ``None`` safely."""
     if text is None:
         return []
     return [tok for tok in text.strip().split() if tok]
 
 
 def _ngram_counts(tokens: Sequence[str], n: int) -> Counter:
+    """Return all n-gram counts for *tokens* as a :class:`Counter`."""
     if n <= 0:
         return Counter()
     return Counter(tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1))
@@ -36,7 +38,6 @@ def corpus_bleu(
     smooth: float = 1e-9,
 ) -> float:
     """Calcola il BLEU corpus-level (0–100)."""
-
     if len(predictions) != len(references):
         raise ValueError("predictions e references devono avere la stessa lunghezza")
     matches_by_order = [0] * max_order
@@ -103,11 +104,11 @@ def corpus_bleu(
 
 def rouge_l_score(predictions: Sequence[str], references: Sequence[str]) -> float:
     """ROUGE-L medio (F1 con beta=1.2) restituito in percentuale."""
-
     if len(predictions) != len(references):
         raise ValueError("predictions e references devono avere la stessa lunghezza")
 
     def lcs(a: Sequence[str], b: Sequence[str]) -> int:
+        """Compute the length of the longest common subsequence between two token lists."""
         m, n = len(a), len(b)
         if m == 0 or n == 0:
             return 0
@@ -145,7 +146,6 @@ def rouge_l_score(predictions: Sequence[str], references: Sequence[str]) -> floa
 
 def meteor_score(predictions: Sequence[str], references: Sequence[str]) -> float:
     """Implementazione semplificata di METEOR (precisione/recall unigrammi)."""
-
     if len(predictions) != len(references):
         raise ValueError("predictions e references devono avere la stessa lunghezza")
 
@@ -207,6 +207,7 @@ def meteor_score(predictions: Sequence[str], references: Sequence[str]) -> float
 
 
 def _coerce_triples(obj: Iterable | str) -> List[Tuple[str, str, str]]:
+    """Normalise user-provided triples to ``(subject, predicate, object)`` tuples."""
     if isinstance(obj, str):
         return parse_rdf(obj)
     triples: List[Tuple[str, str, str]] = []
@@ -219,6 +220,7 @@ def _coerce_triples(obj: Iterable | str) -> List[Tuple[str, str, str]]:
 def triple_precision_recall_f1(
     predictions: Sequence[Iterable | str], references: Sequence[Iterable | str]
 ) -> dict:
+    """Compute precision/recall/F1 on sets of RDF triples."""
     if len(predictions) != len(references):
         raise ValueError("predictions e references devono avere la stessa lunghezza")
 
@@ -245,6 +247,7 @@ def triple_precision_recall_f1(
 
 
 def accuracy_score(predictions: Sequence[str], references: Sequence[str]) -> float:
+    """Return classification accuracy in percentage for paired sequences."""
     if len(predictions) != len(references):
         raise ValueError("predictions e references devono avere la stessa lunghezza")
     total = len(predictions)
@@ -265,6 +268,7 @@ def accuracy_score(predictions: Sequence[str], references: Sequence[str]) -> flo
 def compute_text_generation_metrics(
     predictions: Sequence[str], references: Sequence[str]
 ) -> dict:
+    """Return a dictionary with BLEU, ROUGE-L and METEOR scores."""
     return {
         "bleu": corpus_bleu(predictions, references),
         "rouge_l": rouge_l_score(predictions, references),
@@ -275,8 +279,10 @@ def compute_text_generation_metrics(
 def compute_triple_metrics(
     predictions: Sequence[Iterable | str], references: Sequence[Iterable | str]
 ) -> dict:
+    """Return precision/recall/F1 for triple extraction tasks."""
     return triple_precision_recall_f1(predictions, references)
 
 
 def compute_accuracy(predictions: Sequence[str], references: Sequence[str]) -> dict:
+    """Convenience wrapper returning accuracy as a dictionary."""
     return {"accuracy": accuracy_score(predictions, references)}

@@ -13,7 +13,6 @@ from .losses import sequence_loss_with_span_metrics
 
 class TinySeq2Seq(nn.Module):
     """A flexible sequence-to-sequence Transformer model.
-
     This class implements a standard Transformer encoder-decoder architecture
     with several optional customisations, including:
     - A T5-style architecture with relative position biases.
@@ -58,7 +57,6 @@ class TinySeq2Seq(nn.Module):
         layer_norm_epsilon: float = 1e-6,
     ) -> None:
         """Initializes the TinySeq2Seq model.
-
         Args:
             vocab_size: The size of the vocabulary.
             d_model: The dimensionality of the model's embeddings and hidden states.
@@ -176,7 +174,6 @@ class TinySeq2Seq(nn.Module):
 
     def export_config(self) -> dict[str, object]:
         """Returns the minimal configuration required to rebuild the model."""
-
         return dict(self._checkpoint_config)
 
     def forward(
@@ -190,7 +187,6 @@ class TinySeq2Seq(nn.Module):
         mask_lengths: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor | None]:
         """Performs a forward pass through the model.
-
         Args:
             input_ids: The input token IDs for the encoder.
                 Shape: (batch_size, src_seq_len)

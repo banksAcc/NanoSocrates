@@ -31,6 +31,7 @@ logger = get_logger("wikipedia_fetch_simple")
 # ------------------------------- cache -------------------------------
 
 def load_cache(path: str) -> Dict[str, str]:
+    """Load cached summaries keyed by film identifier."""
     if not path or not os.path.exists(path):
         return {}
     out: Dict[str, str] = {}
@@ -46,6 +47,7 @@ def load_cache(path: str) -> Dict[str, str]:
     return out
 
 def append_cache(path: str, items: Iterable[Dict[str, str]]) -> None:
+    """Append newly fetched summaries to the on-disk cache."""
     if not path:
         return
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -89,6 +91,7 @@ def get_session(user_agent: str, timeout: int) -> requests.Session:
 # ---------------------- Wikipedia REST summary ----------------------
 
 def wiki_rest_summary(title: str, lang: str, session: requests.Session, timeout: int) -> Tuple[Optional[str], int, str]:
+    """Fetch the REST summary for *title* returning ``(text, status_code, url)``."""
     url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
     r = session.get(url, timeout=timeout)
     if r.status_code == 200:
@@ -99,7 +102,8 @@ def wiki_rest_summary(title: str, lang: str, session: requests.Session, timeout:
 
 # -------------------------------- main ------------------------------
 
-def main():
+def main() -> None:
+    """Fetch Wikipedia summaries for the films appearing in the DBpedia dump."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--in", dest="inp", required=True)
@@ -139,6 +143,7 @@ def main():
     failures: List[Dict[str, str]] = []
 
     def task(film_iri: str) -> Optional[Dict[str, str]]:
+        """Worker fetching the summary for a single film IRI."""
         title = iri_to_title(film_iri)
         s = get_session(ua, timeout)
         code, url = None, ""
