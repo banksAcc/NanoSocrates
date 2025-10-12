@@ -9,6 +9,7 @@ from src.utils.config import CHECKPOINT_ALIASES, load_yaml
 
 
 def _pop_model_alias(argv: List[str]) -> Tuple[Optional[str], List[str]]:
+    """Extract ``--model-alias`` from *argv* returning the alias and cleaned args."""
     alias: Optional[str] = None
     cleaned: List[str] = []
     skip_next = False
@@ -29,6 +30,7 @@ def _pop_model_alias(argv: List[str]) -> Tuple[Optional[str], List[str]]:
 
 
 def _find_cfg_path(argv: List[str]) -> Optional[Path]:
+    """Return the configuration path referenced in *argv* if present."""
     for idx, token in enumerate(argv):
         if token == "--cfg" and idx + 1 < len(argv):
             return Path(argv[idx + 1])
@@ -38,6 +40,7 @@ def _find_cfg_path(argv: List[str]) -> Optional[Path]:
 
 
 def _config_alias(cfg_path: Optional[Path]) -> Optional[str]:
+    """Read ``model_alias`` from the YAML config if available."""
     if cfg_path is None or not cfg_path.exists():
         return None
     try:
@@ -52,6 +55,7 @@ def _config_alias(cfg_path: Optional[Path]) -> Optional[str]:
 
 
 def _contains_checkpoint_override(argv: List[str]) -> bool:
+    """Check whether a ``checkpoint=`` override is already provided."""
     pending_override = False
     for token in argv:
         if token == "--override":
@@ -67,6 +71,7 @@ def _contains_checkpoint_override(argv: List[str]) -> bool:
 
 
 def _inject_checkpoint_override(argv: List[str], checkpoint: str) -> List[str]:
+    """Inject ``checkpoint=...`` into ``--override`` arguments when missing."""
     if not checkpoint:
         return argv
     updated = list(argv)
@@ -82,6 +87,7 @@ def _inject_checkpoint_override(argv: List[str], checkpoint: str) -> List[str]:
 
 
 def _ensure_evaluate_command(argv: List[str]) -> List[str]:
+    """Make sure the final command sequence starts with ``evaluate``."""
     if not argv or argv[0] != "evaluate":
         return ["evaluate", *argv]
     return argv
@@ -89,7 +95,6 @@ def _ensure_evaluate_command(argv: List[str]) -> List[str]:
 
 def main() -> None:
     """Reindirizza verso `python -m src.run evaluate` preservando gli argomenti."""
-
     forwarded = sys.argv[1:]
     alias, forwarded = _pop_model_alias(forwarded)
     cfg_path = _find_cfg_path(forwarded)

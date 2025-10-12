@@ -1,123 +1,130 @@
 #!/usr/bin/env python
-"""
-Costruisce il dataset canonico:
-- Pairs per film: {"film","text","triples", "n_triples"}
-- Split per film: splits.json con liste di film per train/val/test
-Opzionale: emette anche i 4 task per split (flag --emit_tasks)
+"""Utility script to build the canonical NanoSocrates dataset and splits."""
 
-Usage:
-  python scripts/build_dataset.py \
-    --config configs/data/build.yaml \
-    --dbp data/raw/dbpedia_triples.jsonl \
-    --wiki data/raw/wikipedia_intro.jsonl \
-    --outdir data/processed \
-    [--emit_tasks]
-"""
 from __future__ import annotations
-import argparse, os, random, json
-from typing import List, Dict, Iterable
 
-from src.utils.io import read_jsonl, write_jsonl
-from src.utils.config import load_yaml
-from src.utils.logging import get_logger
+import argparse
+import json
+import os
+import random
+from typing import Iterable, List
+
+from src.data.builders import build_comp1, build_comp2, build_rdf2text, build_text2rdf
 from src.data.pairing import pair_and_filter
+from src.utils.config import load_yaml
+from src.utils.io import read_jsonl, write_jsonl
+from src.utils.logging import get_logger
 
-# Task builders (usati solo se --emit_tasks)
-from src.data.builders import build_text2rdf, build_rdf2text, build_comp1, build_comp2
+LOGGER = get_logger("build_dataset")
 
-logger = get_logger("build_dataset")
 
-def split_by_film(pairs: List[dict], split_ratios=(0.8, 0.1, 0.1), seed=13):
-    """
-    Split deterministico per-film: shuffla lista di film, taglia in (train,val,test).
-    Restituisce dict: {"train":[...], "val":[...], "test":[...]}
-    """
+def split_by_film(pairs: List[dict], split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1), seed: int = 13):
+    """Split the dataset by film id to avoid leaking a title across different splits."""
     films = [p["film"] for p in pairs]
     rng = random.Random(seed)
     rng.shuffle(films)
     n = len(films)
     n_train = int(n * split_ratios[0])
-    n_val   = int(n * split_ratios[1])
+    n_val = int(n * split_ratios[1])
     train_ids = set(films[:n_train])
-    val_ids   = set(films[n_train:n_train+n_val])
-    test_ids  = set(films[n_train+n_val:])
+    val_ids = set(films[n_train : n_train + n_val])
+    test_ids = set(films[n_train + n_val :])
 
     out = {"train": [], "val": [], "test": []}
-    for ex in pairs:
-        f = ex["film"]
-        if f in train_ids: out["train"].append(ex)
-        elif f in val_ids: out["val"].append(ex)
-        else:              out["test"].append(ex)
+    for example in pairs:
+        film_id = example["film"]
+        if film_id in train_ids:
+            out["train"].append(example)
+        elif film_id in val_ids:
+            out["val"].append(example)
+        else:
+            out["test"].append(example)
     return out
 
-def _add_n_triples(ex: dict) -> dict:
-    ex2 = dict(ex)
-    ex2["n_triples"] = len(ex2.get("triples", []))
-    return ex2
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True, help="configs/data/build.yaml")
-    ap.add_argument("--dbp", required=True, help="data/raw/dbpedia_triples.jsonl")
-    ap.add_argument("--wiki", required=True, help="data/raw/wikipedia_intro.jsonl")
-    ap.add_argument("--outdir", required=True, help="data/processed/")
-    ap.add_argument("--emit_tasks", action="store_true", help="(opzionale) scrivi anche i 4 task per split")
-    args = ap.parse_args()
+def _add_n_triples(example: dict) -> dict:
+    """Return a shallow copy of *example* with an explicit ``n_triples`` field."""
+    enriched = dict(example)
+    enriched["n_triples"] = len(enriched.get("triples", []))
+    return enriched
+
+
+def main() -> None:
+    """Materialise the canonical dataset splits and optional task-specific files."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True, help="configs/data/build.yaml")
+    parser.add_argument("--dbp", required=True, help="data/raw/dbpedia_triples.jsonl")
+    parser.add_argument("--wiki", required=True, help="data/raw/wikipedia_intro.jsonl")
+    parser.add_argument("--outdir", required=True, help="data/processed/")
+    parser.add_argument(
+        "--emit_tasks",
+        action="store_true",
+        help="(opzionale) scrivi anche i 4 task per split",
+    )
+    args = parser.parse_args()
 
     cfg = load_yaml(args.config)
     seed = int(cfg.get("shuffle_seed", 13))
     random.seed(seed)
 
-    # Carica stream grezzi
+    # Carica stream grezzi dalle sorgenti DBpedia/Wikipedia.
     triples_stream = list(read_jsonl(args.dbp))
-    texts_stream   = list(read_jsonl(args.wiki))
-    logger.info(f"Loaded triples: {len(triples_stream)} ; texts: {len(texts_stream)}")
+    texts_stream = list(read_jsonl(args.wiki))
+    LOGGER.info("Loaded triples: %d ; texts: %d", len(triples_stream), len(texts_stream))
 
-    # Pairing + filtro qualità
-    pairs = list(pair_and_filter(
-        triples_stream,
-        texts_stream,
-        min_triples=int(cfg.get("min_triples_per_film", 3)),
-    ))
-    logger.info(f"Paired examples (films): {len(pairs)}")
+    # Appaia triple e testi ed effettua un filtro di qualità minimo.
+    pairs = list(
+        pair_and_filter(
+            triples_stream,
+            texts_stream,
+            min_triples=int(cfg.get("min_triples_per_film", 3)),
+        )
+    )
+    LOGGER.info("Paired examples (films): %d", len(pairs))
 
     if not pairs:
-        logger.warning("No pairs available after filtering. Check inputs/configs.")
+        LOGGER.warning("No pairs available after filtering. Check inputs/configs.")
         return
 
-    # Persisti la “verità” canonica (pairs all + split)
+    # Persist canonical pairs and precomputed splits for downstream scripts.
     os.makedirs("data/interim", exist_ok=True)
 
-    write_jsonl("data/interim/pairs.all.jsonl", (_add_n_triples(p) for p in pairs))
-    logger.info("Wrote data/interim/pairs.all.jsonl")
+    write_jsonl("data/interim/pairs.all.jsonl", (_add_n_triples(pair) for pair in pairs))
+    LOGGER.info("Wrote data/interim/pairs.all.jsonl")
 
     ratios = tuple(cfg.get("train_val_test_split", [0.8, 0.1, 0.1]))
     splits = split_by_film(pairs, ratios, seed)
-    with open("data/interim/splits.json", "w", encoding="utf-8") as f:
-        json.dump({k: [ex["film"] for ex in v] for k, v in splits.items()}, f, ensure_ascii=False, indent=2)
-    logger.info("Wrote data/interim/splits.json")
+    with open("data/interim/splits.json", "w", encoding="utf-8") as fh:
+        json.dump(
+            {split: [example["film"] for example in items] for split, items in splits.items()},
+            fh,
+            ensure_ascii=False,
+            indent=2,
+        )
+    LOGGER.info("Wrote data/interim/splits.json")
 
-    # (comodo per debug) pairs per split
-    for k, exs in splits.items():
-        write_jsonl(f"data/interim/pairs.{k}.jsonl", (_add_n_triples(p) for p in exs))
-        logger.info(f"Wrote data/interim/pairs.{k}.jsonl ({len(exs)} films)")
+    for split_name, examples in splits.items():
+        write_jsonl(f"data/interim/pairs.{split_name}.jsonl", (_add_n_triples(example) for example in examples))
+        LOGGER.info("Wrote data/interim/pairs.%s.jsonl (%d films)", split_name, len(examples))
 
-    # Opzionale: emetti anche i 4 task materializzati per split (come prima)
     if args.emit_tasks:
         os.makedirs(args.outdir, exist_ok=True)
 
-        def dump_task(task_name: str, records: Iterable[dict], split: str):
+        def dump_task(task_name: str, records: Iterable[dict], split: str) -> None:
+            """Write a task-specific JSONL file for a given data *split*."""
             path = os.path.join(args.outdir, f"{task_name}.{split}.jsonl")
             write_jsonl(path, records)
-            logger.info(f"Wrote {task_name}.{split} to {path}")
+            LOGGER.info("Wrote %s.%s to %s", task_name, split, path)
 
-        for split, examples in splits.items():
-            dump_task("text2rdf",  build_text2rdf(examples, cfg.get("max_seq_len", 384)), split)
-            dump_task("rdf2text",  build_rdf2text(examples, cfg.get("max_seq_len", 384)), split)
-            dump_task("rdfcomp1",  build_comp1(examples,  cfg.get("max_seq_len", 384)), split)
-            dump_task("rdfcomp2",  build_comp2(examples,  cfg.get("max_seq_len", 384)), split)
+        for split_name, examples in splits.items():
+            max_len = cfg.get("max_seq_len", 384)
+            dump_task("text2rdf", build_text2rdf(examples, max_len), split_name)
+            dump_task("rdf2text", build_rdf2text(examples, max_len), split_name)
+            dump_task("rdfcomp1", build_comp1(examples, max_len), split_name)
+            dump_task("rdfcomp2", build_comp2(examples, max_len), split_name)
 
-    logger.info("Done.")
+    LOGGER.info("Done.")
+
 
 if __name__ == "__main__":
     main()

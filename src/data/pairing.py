@@ -18,6 +18,7 @@ def pair_and_filter(
     texts_stream: Iterable[dict],
     min_triples: int = 3,
 ) -> Iterator[dict]:
+    """Join triple and text streams keeping only well-formed film records."""
     triples_by_film: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
     for r in triples_stream:
         direction = r.get("dir", "out")
@@ -25,6 +26,9 @@ def pair_and_filter(
             triple = (r["o"], r["p"], r["film"])
         else:
             triple = (r["film"], r["p"], r["o"])
+        # We normalise triples so that the film is always the subject. For
+        # "incoming" edges we swap subject and object to keep the format
+        # consistent with decoder expectations.
         triples_by_film[r["film"]].append(triple)
 
     texts_by_film: Dict[str, str] = {}
@@ -39,7 +43,8 @@ def pair_and_filter(
             dropped_no_text += 1
             continue
 
-        # rimuove duplicati mantenendo ordine (dict.fromkeys su tuple (s, p, o))
+        # Remove duplicates but preserve the original ordering so downstream
+        # tasks can still align triples with textual references.
         triples_unique = list(dict.fromkeys(triples))
         if len(triples_unique) < min_triples:
             dropped_few_triples += 1

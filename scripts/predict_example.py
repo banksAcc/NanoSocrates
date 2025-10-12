@@ -20,6 +20,7 @@ TASK_MARKERS = {
 
 
 def prepare_input(text: str, task: str | None) -> str:
+    """Attach the task marker to *text* when necessary for decoding."""
     text = text.strip()
     if task:
         marker = TASK_MARKERS.get(task)
@@ -31,7 +32,8 @@ def prepare_input(text: str, task: str | None) -> str:
     return text
 
 
-def main():
+def main() -> None:
+    """Load the model/tokenizer and print the generated completion."""
     ap = argparse.ArgumentParser(description="Esegue una singola predizione")
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--tokenizer", required=True)

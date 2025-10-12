@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 class TrainingLoop:
     """A class to encapsulate the training and validation loops.
-
     This class handles the complexities of model training, including:
     - Iterating over epochs and batches.
     - Gradient accumulation to simulate larger batch sizes.
@@ -50,7 +49,6 @@ class TrainingLoop:
         wandb_run: "wandb.sdk.wandb_run.Run" | None = None,
     ):
         """Initializes the TrainingLoop.
-
         Args:
             model: The PyTorch model to train.
             optimizer: The optimizer.
@@ -126,7 +124,6 @@ class TrainingLoop:
 
     def run(self, num_epochs: int) -> dict[str, Any]:
         """Starts and manages the training process for a given number of epochs.
-
         Args:
             num_epochs: The total number of epochs to train for.
 
@@ -197,7 +194,6 @@ class TrainingLoop:
 
     def _train_epoch(self, epoch: int) -> dict[str, float]:
         """Performs one full training pass over the training data.
-
         Returns:
             A dictionary of average training metrics for the epoch.
 
@@ -292,7 +288,6 @@ class TrainingLoop:
     @torch.inference_mode()
     def _validate_epoch(self) -> dict[str, float]:
         """Performs one full validation pass.
-
         Returns:
             A dictionary of average validation metrics.
         """
@@ -334,7 +329,6 @@ class TrainingLoop:
 
     def _check_early_stopping(self, current_score: float) -> bool:
         """Checks if early stopping criteria are met and saves the best model.
-
         Args:
             current_score: The validation score from the current epoch.
 
@@ -373,7 +367,6 @@ class TrainingLoop:
     @staticmethod
     def _prepare_model_inputs(batch: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Filters a collated batch to only the tensors consumed by the model."""
-
         allowed_keys = {
             "input_ids",
             "attention_mask",

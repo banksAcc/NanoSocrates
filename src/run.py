@@ -33,6 +33,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _get_pad_id(tokenizer: Tokenizer) -> int:
+    """Look up the pad token id and fail fast if the vocabulary is incomplete."""
     pad = tokenizer.token_to_id("<pad>")
     if pad is None:
         raise ValueError("Tokenizer privo di <pad>: rigenera il BPE includendo <pad>.")
@@ -41,7 +42,6 @@ def _get_pad_id(tokenizer: Tokenizer) -> int:
 
 def set_seed(seed: int) -> None:
     """Assicura riproducibilità impostando tutti i seed noti."""
-
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -52,7 +52,6 @@ def set_seed(seed: int) -> None:
 
 def _build_model(cfg: Dict[str, Any], tokenizer: Tokenizer) -> TinySeq2Seq:
     """Costruisce il Transformer rispettando le scelte presenti nel config."""
-
     pad_id = _get_pad_id(tokenizer)
     model = TinySeq2Seq(
         vocab_size=tokenizer.get_vocab_size(),
@@ -79,6 +78,7 @@ def _build_model(cfg: Dict[str, Any], tokenizer: Tokenizer) -> TinySeq2Seq:
 
 
 def _build_optimizer(cfg: Dict[str, Any], model: TinySeq2Seq) -> torch.optim.Optimizer:
+    """Create the default AdamW optimiser using hyperparameters from *cfg*."""
     return torch.optim.AdamW(
         model.parameters(),
         lr=float(cfg.get("lr", 3e-4)),
@@ -91,6 +91,7 @@ def _build_scheduler(
     optimizer: torch.optim.Optimizer,
     total_steps: int,
 ) -> torch.optim.lr_scheduler.LambdaLR | None:
+    """Construct the learning-rate scheduler only when it is explicitly requested."""
     name = cfg.get("scheduler")
     if not name or total_steps <= 0:
         return None
@@ -104,6 +105,7 @@ def _build_scheduler(
 
 
 def _prepare_config(args: argparse.Namespace) -> Dict[str, Any]:
+    """Load the configuration file and apply CLI overrides/toy shortcuts."""
     cfg = load_yaml(args.cfg)
     if getattr(args, "toy", False):
         cfg = apply_toy_paths(cfg)
@@ -115,7 +117,6 @@ def _prepare_config(args: argparse.Namespace) -> Dict[str, Any]:
 
 def _maybe_swap_to_eval_config(cfg_path: Path, cfg: Dict[str, Any] | None) -> Path:
     """Ritorna il config di valutazione equivalente a quello di training se presente."""
-
     if cfg and ("checkpoint" in cfg or "tasks" in cfg or "datasets" in cfg):
         return cfg_path
     if cfg_path.parent.name == "train":
@@ -131,6 +132,7 @@ def _maybe_swap_to_eval_config(cfg_path: Path, cfg: Dict[str, Any] | None) -> Pa
 
 
 def _print_report(report: Dict[str, object]) -> None:
+    """Pretty-print evaluation results grouping metrics by split and task."""
     print("=== Evaluation Report ===")
     for split_name, split_payload in report.get("splits", {}).items():
         print(f"\n[{split_name}]")
@@ -161,7 +163,6 @@ def _print_report(report: Dict[str, object]) -> None:
 
 def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
     """Esegue l'intero ciclo di training partendo da un config strutturato."""
-
     seed = int(cfg.get("seed", 42))
     set_seed(seed)
 
@@ -256,16 +257,19 @@ def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
 
 
 def cmd_train(args: argparse.Namespace) -> None:
+    """Entry point for the ``train`` sub-command."""
     cfg = _prepare_config(args)
     run_training(cfg, overfit=False)
 
 
 def cmd_overfit(args: argparse.Namespace) -> None:
+    """Entry point for the ``overfit`` sub-command."""
     cfg = _prepare_config(args)
     run_training(cfg, overfit=True)
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
+    """Entry point for the ``evaluate`` sub-command that saves metrics to disk."""
     cfg_path = Path(args.cfg)
     raw_cfg = load_yaml(cfg_path)
     effective_cfg_path = _maybe_swap_to_eval_config(cfg_path, raw_cfg)
@@ -304,6 +308,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Create the top-level CLI parser with the train/overfit/evaluate commands."""
     parser = argparse.ArgumentParser(description="Pipeline di training NanoSocrates")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -321,6 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Parse CLI arguments and dispatch to the selected sub-command."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     args = build_parser().parse_args()
     if args.command == "train":

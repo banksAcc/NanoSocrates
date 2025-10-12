@@ -35,7 +35,6 @@ _TASK_ALIASES: Dict[str, str] = {
 
 def _normalise_task_name(value: str | None, fallback: str) -> str:
     """Normalises raw task identifiers to the internal lowercase format."""
-
     if not value:
         return fallback
     key = value.lower()
@@ -47,8 +46,7 @@ def _normalise_task_name(value: str | None, fallback: str) -> str:
 
 
 def _infer_task_from_path(path: str) -> str:
-    """Guesses the task name from the filename when not explicitly provided."""
-
+    """Guess the task name from the filename when not explicitly provided."""
     name = Path(path).name.lower()
     for alias, canonical in _TASK_ALIASES.items():
         if alias in name:
@@ -57,8 +55,7 @@ def _infer_task_from_path(path: str) -> str:
 
 
 def _get_pad_id(tokenizer: Any) -> int:
-    """Returns the padding token id from a tokenizer or wrapper."""
-
+    """Return the padding token id from a tokenizer or wrapper."""
     if hasattr(tokenizer, "pad_id"):
         return int(getattr(tokenizer, "pad_id"))
     pad = tokenizer.token_to_id("<pad>")
@@ -68,8 +65,7 @@ def _get_pad_id(tokenizer: Any) -> int:
 
 
 def _encode(tokenizer: Any, text: str) -> List[int]:
-    """Encodes text into token ids handling both HF Tokenizer and wrappers."""
-
+    """Encode text into token ids handling both HF Tokenizer and wrappers."""
     encoded = tokenizer.encode(text)
     if hasattr(encoded, "ids"):
         return list(encoded.ids)
@@ -80,7 +76,7 @@ def _encode(tokenizer: Any, text: str) -> List[int]:
 
 @dataclass
 class Seq2SeqExample:
-    """Container for a pre-tokenised sequence-to-sequence example."""
+    """Represent a pre-tokenised sequence-to-sequence example."""
 
     input_text: str
     target_text: str
@@ -93,12 +89,12 @@ class Seq2SeqExample:
 
 
 def _truncate(sequence: List[int], max_len: int) -> List[int]:
+    """Clip *sequence* to at most *max_len* tokens to respect model limits."""
     return sequence[:max_len]
 
 
 def _normalise_span_payload(spans: Any) -> List[tuple[int, int]]:
-    """Converts heterogeneous span annotations into (start, length) tuples."""
-
+    """Convert heterogeneous span annotations into (start, length) tuples."""
     normalised: List[tuple[int, int]] = []
 
     if not spans:
@@ -165,8 +161,7 @@ def _iter_examples(
     task_hint: str | None = None,
     enable_entity_spans: bool = False,
 ) -> Iterator[Seq2SeqExample]:
-    """Yields tokenised examples from a JSONL file."""
-
+    """Yield tokenised examples from a JSONL file."""
     inferred_task = _infer_task_from_path(path)
     for record in read_jsonl(path):
         source = str(record.get("input") or record.get("source") or record.get("text") or "")
@@ -226,15 +221,19 @@ def _iter_examples(
 
 
 class MultiTaskDataset(Dataset):
-    """Simple dataset that stores pre-tokenised seq2seq examples."""
+    """Store pre-tokenised seq2seq examples in memory."""
 
     def __init__(self, items: Sequence[Seq2SeqExample]):
+        """Create a dataset backed by an in-memory list of examples."""
         self.items: List[Seq2SeqExample] = list(items)
 
     def __len__(self) -> int:  # pragma: no cover - trivial
+        """Return the number of stored examples."""
+
         return len(self.items)
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
+        """Return the example payload ready for batching."""
         example = self.items[index]
         payload: Dict[str, Any] = {
             "input_ids": example.input_ids,
@@ -251,25 +250,22 @@ class MultiTaskDataset(Dataset):
         return payload
 
     def select_first(self, n_examples: int) -> "MultiTaskDataset":
-        """Returns a shallow copy containing only the first *n_examples*."""
-
+        """Return a shallow copy containing only the first *n_examples*."""
         return MultiTaskDataset(self.items[: max(1, n_examples)])
 
     def task_counts(self) -> Counter:
-        """Returns the number of examples per task."""
-
+        """Return the number of examples per task."""
         return Counter(example.task for example in self.items)
 
     def task_fractions(self) -> Dict[str, float]:
-        """Returns normalised task ratios useful for the sampler."""
-
+        """Return normalised task ratios useful for the sampler."""
         counts = self.task_counts()
         total = sum(counts.values()) or 1
         return {task: count / total for task, count in counts.items()}
 
 
 class JsonlSeq2Seq(MultiTaskDataset):
-    """Dataset specialised for loading a single JSONL file."""
+    """Load and cache a single JSONL file as a seq2seq dataset."""
 
     def __init__(
         self,
@@ -280,6 +276,7 @@ class JsonlSeq2Seq(MultiTaskDataset):
         task: str | None = None,
         enable_entity_spans: bool = False,
     ) -> None:
+        """Materialise the JSONL file contents into :class:`Seq2SeqExample` objects."""
         self.path = str(path)
         self.max_len = int(max_len)
         self.pad_id = _get_pad_id(tokenizer)
@@ -296,7 +293,7 @@ class JsonlSeq2Seq(MultiTaskDataset):
 
 
 class MultiTaskSampler(Sampler[List[int]]):
-    """Sampler that draws balanced batches according to task ratios."""
+    """Draw balanced batches according to task ratios."""
 
     def __init__(
         self,
@@ -306,6 +303,7 @@ class MultiTaskSampler(Sampler[List[int]]):
         *,
         drop_last: bool = False,
     ) -> None:
+        """Build task-specific index pools so batches can be balanced on demand."""
         super().__init__(dataset)
         self.dataset = dataset
         self.batch_size = int(batch_size)
@@ -331,6 +329,7 @@ class MultiTaskSampler(Sampler[List[int]]):
         }
 
     def __iter__(self) -> Iterator[List[int]]:
+        """Yield balanced batches honouring the requested task ratios."""
         task_iters: Dict[str, Iterator[int]] = {}
         for task, indices in self.indices_by_task.items():
             random.shuffle(indices)
@@ -372,6 +371,8 @@ class MultiTaskSampler(Sampler[List[int]]):
             yield batch
 
     def __len__(self) -> int:  # pragma: no cover - straightforward math
+        """Return the number of batches that will be produced."""
+
         total = len(self.dataset) // self.batch_size
         if not self.drop_last and len(self.dataset) % self.batch_size:
             total += 1
@@ -384,12 +385,12 @@ def pad_collate(
     pad_id: int,
     label_pad_id: int | None = None,
 ) -> Dict[str, torch.Tensor]:
-    """Pads variable-length examples into a dense batch."""
-
+    """Pad variable-length examples into a dense batch."""
     if label_pad_id is None:
         label_pad_id = pad_id
 
     def _pad_tensor(sequences: Sequence[Sequence[int]], value: int) -> torch.Tensor:
+        """Convert python lists into padded dense tensors with padding *value*."""
         tensors = [torch.tensor(seq, dtype=torch.long) for seq in sequences]
         return torch.nn.utils.rnn.pad_sequence(tensors, batch_first=True, padding_value=value)
 
@@ -426,13 +427,15 @@ def pad_collate(
 
 
 class PadCollator:
-    """Callable wrapper around :func:`pad_collate` that can be pickled."""
+    """Wrap :func:`pad_collate` in a picklable callable."""
 
     def __init__(self, *, pad_id: int, label_pad_id: int | None = None) -> None:
+        """Store padding identifiers to be reused by worker processes."""
         self.pad_id = int(pad_id)
         self.label_pad_id = label_pad_id if label_pad_id is None else int(label_pad_id)
 
     def __call__(self, batch: Sequence[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        """Pad *batch* using the configured identifiers."""
         return pad_collate(batch, pad_id=self.pad_id, label_pad_id=self.label_pad_id)
 
 
@@ -445,8 +448,7 @@ def create_multitask_dataloader(
     num_workers: int = 0,
     shuffle: bool = True,
 ) -> DataLoader:
-    """Creates a DataLoader configured for multi-task batches."""
-
+    """Create a DataLoader configured for multi-task batches."""
     pad_id = _get_pad_id(tokenizer)
     collate = PadCollator(pad_id=pad_id)
 

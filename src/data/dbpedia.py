@@ -38,9 +38,8 @@ def _fmt_predicates(preds: List[str]) -> str:
     return " ".join(preds)
 
 def _paged_queries(template: str, predicates: List[str], batch_size: int, limit_total: int):
-    """
-    Genera query con LIMIT/OFFSET per coprire fino a limit_total righe.
-    """
+    """Generate paginated SPARQL queries using LIMIT/OFFSET windows."""
+
     pred_str = _fmt_predicates(predicates)
     emitted = 0
     offset = 0
@@ -74,6 +73,8 @@ def fetch_triples(config_path: str) -> Iterator[Dict[str, str]]:
     from SPARQLWrapper import SPARQLWrapper, JSON
 
     def run(template: str, dir_tag: str):
+        """Execute the paginated query *template* and yield normalised triples."""
+
         nonlocal endpoint
         for q, (limit, offset) in _paged_queries(template, preds, batch_size, limit_total):
             logger.info(f"DBpedia {dir_tag}: LIMIT {limit} OFFSET {offset}")
