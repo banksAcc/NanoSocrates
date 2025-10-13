@@ -34,26 +34,16 @@ nanosocrates/
 │  ├─ predict_example.py         # inference minimale da riga di comando
 │  ├─ sanity_overfit.py          # scorciatoia per l'overfit di un batch
 │  └─ train_tokenizer.py         # addestra il tokenizer BPE
-├─ src/
-│  ├─ run.py                     # entrypoint unificato (train/overfit/evaluate/predict)
-│  ├─ data/                      # fetch DBpedia/Wikipedia, pairing, serializzazione
-│  ├─ decoding/                  # strategie di decoding e vincoli
-│  ├─ eval/                      # metriche e orchestratore valutazione
-│  ├─ model/                     # TinySeq2Seq, layer MHA/MLA, perdite
-│  ├─ tokenizer/                 # wrapper IO e libreria per BPE
-│  ├─ training/                  # dataloader multitask, loop, scheduler
-│  ├─ utils/                     # config YAML, IO, logging, integrazione W&B
-│  └─ plots/curves.py            # placeholder per grafici (stub vuoto)
-└─ tests/
-   ├─ integration/               # scenari end-to-end
-   ├─ test_builders.py           # validazione dataset JSONL
-   ├─ test_decoding.py           # vincoli e decoding greedy
-   ├─ test_dataloaders.py        # collate + span masking
-   ├─ test_losses.py             # loss multi-task/spans
-   ├─ test_metrics.py            # metriche BLEU/ROUGE/F1
-   ├─ test_scheduler.py          # scheduler cosine+warmup
-   ├─ test_serialization.py      # linearizzazione RDF ↔ testo
-   └─ test_transformer_variants.py # controlli sulle ablation
+└─ src/
+   ├─ run.py                     # entrypoint unificato (train/overfit/evaluate/predict)
+   ├─ data/                      # fetch DBpedia/Wikipedia, pairing, serializzazione
+   ├─ decoding/                  # strategie di decoding e vincoli
+   ├─ eval/                      # metriche e orchestratore valutazione
+   ├─ model/                     # TinySeq2Seq, layer MHA/MLA, perdite
+   ├─ tokenizer/                 # wrapper IO e libreria per BPE
+   ├─ training/                  # dataloader multitask, loop, scheduler
+   ├─ utils/                     # config YAML, IO, logging, integrazione W&B
+   └─ plots/curves.py            # placeholder per grafici (stub vuoto)
 ```
 
 ---
@@ -322,12 +312,12 @@ pytest tests/test_transformer_variants.py
 
 ---
 
-## 12) Riferimento iperparametri & strategie di tuning
+## 10) Riferimento iperparametri & strategie di tuning
 
 Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 `eval/`) con note pratiche per il tuning.
 
-### 12.1 Architettura del modello (`configs/train/*.yaml`)
+### 10.1 Architettura del modello (`configs/train/*.yaml`)
 
 | Chiave                      | Significato                       | Range/Note                                            |
 | --------------------------- | --------------------------------- | ----------------------------------------------------- |
@@ -343,7 +333,7 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 | `enable_entity_spans`       | Propaga span mask nei batch       | Necessario per RDF Completion 1                       |
 | `compute_span_metrics`      | Aggiunge metriche sugli span      | Impatta marginalmente sui tempi                       |
 
-### 12.2 Ottimizzazione & controllo training
+### 10.2 Ottimizzazione & controllo training
 
 | Chiave                          | Descrizione                | Suggerimenti                                                                                    |
 | ------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -359,7 +349,7 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 | `early_stopping.min_delta`      | Miglioramento minimo       | 0.0–0.01                                                                                        |
 | `overfit_one_batch`             | Debug di pipeline          | Attivato automaticamente da `src.run overfit`                                                   |
 
-### 12.3 Gestione dati & mixing multitask
+### 10.3 Gestione dati & mixing multitask
 
 | Chiave                    | Descrizione              | Note                                                  |
 | ------------------------- | ------------------------ | ----------------------------------------------------- |
@@ -368,7 +358,7 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 | `max_len`                 | Troncamento input/target | Deve corrispondere al valore del tokenizer            |
 | Flag RUN `--toy`          | Dataset rapido           | Applica automaticamente `configs/data/toy.yaml`       |
 
-### 12.4 Logging & strumentazione
+### 10.4 Logging & strumentazione
 
 | Chiave                     | Descrizione                                                 |
 | -------------------------- | ----------------------------------------------------------- |
@@ -378,7 +368,7 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 | `wandb.tags`               | Lista di tag (filtri dashboard)                             |
 | `wandb.watch`              | Se `true`, abilita `wandb.watch` sul modello                |
 
-### 12.5 Config valutazione (`configs/eval/*.yaml`)
+### 10.5 Config valutazione (`configs/eval/*.yaml`)
 
 - `checkpoint`, `tokenizer_file`, `device`: cosa caricare e dove inferire.
 - `model_alias`: mapping rapido verso i checkpoint salvati (`mix`, `rope_on`, ...).
@@ -388,7 +378,7 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 - Blocchi `tasks.*.val/test`: percorsi per split; è possibile escludere task
   per valutazioni parziali.
 
-### 12.6 Strategie pratiche di tuning
+### 10.6 Strategie pratiche di tuning
 
 - **RDF2Text (BLEU/ROUGE)**: aumenta `d_model` a 512, porta
   `enc_layers`/`dec_layers` a 4–5, riduci `dropout` a 0.05, abilita logging W&B
