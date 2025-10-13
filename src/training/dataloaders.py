@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import random
+import math
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Mapping, Sequence
 
@@ -339,11 +340,15 @@ class MultiTaskSampler(Sampler[List[int]]):
         if not self.drop_last and len(self.dataset) % self.batch_size:
             num_batches += 1
 
+        allocation = self._compute_batch_allocation()
         tasks = list(self.task_ratios.keys())
+        active_tasks = [task for task, count in allocation.items() if count > 0]
+        sampling_tasks = active_tasks or tasks
         for _ in range(num_batches):
             batch: List[int] = []
-            for task_name, ratio in self.task_ratios.items():
-                desired = max(1, int(round(self.batch_size * ratio)))
+            for task_name, desired in allocation.items():
+                if desired <= 0:
+                    continue
                 for _ in range(desired):
                     iterator = task_iters.get(task_name)
                     if iterator is None:
@@ -356,7 +361,7 @@ class MultiTaskSampler(Sampler[List[int]]):
                         batch.append(next(task_iters[task_name]))
 
             while len(batch) < self.batch_size:
-                task_name = random.choice(tasks)
+                task_name = random.choice(sampling_tasks)
                 iterator = task_iters.get(task_name)
                 if iterator is None:
                     continue
@@ -369,6 +374,70 @@ class MultiTaskSampler(Sampler[List[int]]):
 
             random.shuffle(batch)
             yield batch
+
+    def _compute_batch_allocation(self) -> Dict[str, int]:
+        """Return the per-task sample counts for a balanced batch."""
+
+        tasks = list(self.task_ratios.keys())
+        if not tasks or self.batch_size <= 0:
+            return {task: 0 for task in tasks}
+
+        desired_counts = {
+            task: self.task_ratios[task] * self.batch_size for task in tasks
+        }
+        allocations = {task: math.floor(desired_counts[task]) for task in tasks}
+        remainders = {
+            task: desired_counts[task] - allocations[task] for task in tasks
+        }
+        remaining = self.batch_size - sum(allocations.values())
+
+        if len(tasks) > self.batch_size and remaining > 0:
+            zero_tasks = [task for task in tasks if allocations[task] == 0]
+            zero_tasks.sort(key=lambda t: self.task_ratios[t], reverse=True)
+            for task in zero_tasks:
+                if remaining <= 0:
+                    break
+                allocations[task] += 1
+                remainders[task] = 0.0
+                remaining -= 1
+
+        if remaining > 0:
+            for task in sorted(tasks, key=lambda t: remainders[t], reverse=True):
+                if remaining <= 0:
+                    break
+                if remainders[task] <= 0:
+                    continue
+                allocations[task] += 1
+                remaining -= 1
+                remainders[task] = 0.0
+
+        if remaining > 0:
+            for task in sorted(tasks, key=lambda t: self.task_ratios[t], reverse=True):
+                if remaining <= 0:
+                    break
+                allocations[task] += 1
+                remaining -= 1
+
+        total = sum(allocations.values())
+        if total > self.batch_size:
+            excess = total - self.batch_size
+            for task in sorted(tasks, key=lambda t: (self.task_ratios[t], allocations[t])):
+                if excess <= 0:
+                    break
+                removable = min(allocations[task], excess)
+                if removable <= 0:
+                    continue
+                allocations[task] -= removable
+                excess -= removable
+        elif total < self.batch_size:
+            deficit = self.batch_size - total
+            for task in sorted(tasks, key=lambda t: self.task_ratios[t], reverse=True):
+                if deficit <= 0:
+                    break
+                allocations[task] += 1
+                deficit -= 1
+
+        return allocations
 
     def __len__(self) -> int:  # pragma: no cover - straightforward math
         """Return the number of batches that will be produced."""
