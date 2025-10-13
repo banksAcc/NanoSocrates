@@ -2,8 +2,8 @@
 Pairing & filtro qualità:
 - Unisce triple (per film) e testo (intro) in un unico record.
 - rimuove duplicati di triple, scarta film con testo mancante o poche triple.
-- normalizza le triple in forma (s, p, o), sia per relazioni uscenti che entranti.
-Output: {"film", "text", "triples": [(s, p, o), ...]}
+- normalizza le triple in forma (film, p, o) così che il film resti sempre il soggetto.
+Output: {"film", "text", "triples": [(film, p, o), ...]}
 """
 
 from __future__ import annotations
@@ -18,17 +18,17 @@ def pair_and_filter(
     texts_stream: Iterable[dict],
     min_triples: int = 3,
 ) -> Iterator[dict]:
-    """Join triple and text streams keeping only well-formed film records."""
+    """Join triple and text streams keeping only well-formed film records.
+
+    The returned triples always expose the film as the explicit subject,
+    regardless of the original triple direction provided upstream.
+    """
     triples_by_film: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
     for r in triples_stream:
-        direction = r.get("dir", "out")
-        if direction == "in":
-            triple = (r["o"], r["p"], r["film"])
-        else:
-            triple = (r["film"], r["p"], r["o"])
-        # We normalise triples so that the film is always the subject. For
-        # "incoming" edges we swap subject and object to keep the format
-        # consistent with decoder expectations.
+        triple = (r["film"], r["p"], r["o"])
+        # We normalise triples so that the film is always the subject. Incoming
+        # edges are conceptually rewritten to keep a consistent (film, predicate,
+        # object) structure for downstream consumers.
         triples_by_film[r["film"]].append(triple)
 
     texts_by_film: Dict[str, str] = {}
