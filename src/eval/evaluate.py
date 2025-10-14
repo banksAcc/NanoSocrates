@@ -10,7 +10,6 @@ from functools import partial
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
-from pyparsing import Diagnostics
 import torch
 from torch.utils.data import DataLoader
 
@@ -28,13 +27,14 @@ STRUCTURAL_DECODE_TOKENS: tuple[str, ...] = (
     "<PRED>",
     "<OBJ>",
     "<OBJ_LIST>",
+    "|",
     "<Text2RDF>",
     "<RDF2Text>",
     "<CONTINUERDF>",
     "<MASK>",
 )
 
-TEXTUAL_OUTPUT_TASKS: frozenset[str] = frozenset({"rdf2text", "rdfcomp1", "rdfcomp2"})
+TEXTUAL_OUTPUT_TASKS: frozenset[str] = frozenset({"rdf2text", "rdfcomp1"})
 
 
 def _select_device(want: Optional[str]) -> str:
@@ -675,7 +675,8 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                 "loss": float(loss),
                 "num_samples": len(dataset),
                 "metrics": metrics_payload,
-                "diagnostics": Diagnostics,
+                # attach computed diagnostics, not the pyparsing enum
+                "diagnostics": diagnostics,
             }
             if previews:
                 split_payload["tasks"][task_name]["preview"] = previews

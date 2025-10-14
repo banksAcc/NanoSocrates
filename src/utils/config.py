@@ -44,7 +44,14 @@ def load_yaml(path: str):
 
 
 def resolve_checkpoint_reference(cfg: Dict[str, object]) -> Dict[str, object]:
-    """Sostituisce il placeholder del checkpoint sfruttando l'alias quando possibile."""
+    """Risolvi il checkpoint usando l'alias quando quello indicato è fittizio.
+
+    Regole:
+      - Se `checkpoint` è omesso o vuoto, usa `model_alias`.
+      - Se `checkpoint` è un segnaposto (es. CHECKPOINT_PLACEHOLDER o "overfit.pt")
+        oppure punta a un path inesistente, prova a risolvere tramite `model_alias`.
+      - Altrimenti lascia invariato `checkpoint`.
+    """
 
     if not isinstance(cfg, dict) or "checkpoint" not in cfg:
         return cfg
@@ -52,7 +59,31 @@ def resolve_checkpoint_reference(cfg: Dict[str, object]) -> Dict[str, object]:
     checkpoint = cfg.get("checkpoint")
     alias = cfg.get("model_alias")
 
-    if isinstance(checkpoint, str) and checkpoint not in {"", CHECKPOINT_PLACEHOLDER}:
+    # Normalizza
+    if isinstance(checkpoint, str):
+        ckpt_str = checkpoint.strip()
+    else:
+        ckpt_str = ""
+
+    # Decide se il checkpoint è "fittizio" e quindi risolvibile via alias
+    needs_resolution = False
+    if not ckpt_str:
+        needs_resolution = True
+    elif ckpt_str == CHECKPOINT_PLACEHOLDER:
+        needs_resolution = True
+    elif ckpt_str.lower() == "overfit.pt":
+        needs_resolution = True
+    else:
+        try:
+            from pathlib import Path
+
+            if not Path(ckpt_str).exists():
+                needs_resolution = True
+        except Exception:
+            # In caso di path non valido, prova comunque con l'alias
+            needs_resolution = True
+
+    if not needs_resolution:
         return cfg
 
     if isinstance(alias, str) and alias.strip():
@@ -67,7 +98,7 @@ def resolve_checkpoint_reference(cfg: Dict[str, object]) -> Dict[str, object]:
         )
 
     raise ValueError(
-        "Config di valutazione senza checkpoint: usa --override checkpoint=... oppure definisci 'model_alias'."
+        "Config di valutazione senza checkpoint valido: usa --override checkpoint=... oppure definisci 'model_alias'."
     )
 
 def add_common_overrides(ap: argparse.ArgumentParser):
