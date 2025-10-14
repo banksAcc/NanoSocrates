@@ -203,8 +203,20 @@ def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
         shuffle=False,
     )
 
-    steps_per_epoch = max(1, math.ceil(len(train_dataset) / batch_size))
-    total_steps = steps_per_epoch * int(cfg.get("num_epochs", 1))
+    num_epochs = int(cfg.get("num_epochs", 1))
+    grad_accum_steps = max(1, int(cfg.get("gradient_accumulation_steps", 1)))
+
+    try:
+        batches_per_epoch = len(train_loader)
+    except TypeError:
+        dataset_length = len(train_dataset)
+        batches_per_epoch = math.ceil(dataset_length / batch_size) if batch_size > 0 else 0
+
+    if batches_per_epoch == 0 or num_epochs <= 0:
+        total_steps = 0
+    else:
+        optimizer_steps_per_epoch = math.ceil(batches_per_epoch / grad_accum_steps)
+        total_steps = optimizer_steps_per_epoch * num_epochs
 
     model = _build_model(cfg, tokenizer)
     optimizer = _build_optimizer(cfg, model)
@@ -232,7 +244,7 @@ def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
         val_loader=val_loader,
         device=device,
         use_amp=use_amp,
-        grad_accum_steps=int(cfg.get("gradient_accumulation_steps", 1)),
+        grad_accum_steps=grad_accum_steps,
         log_every_n_steps=int(cfg.get("log_every_n_steps", 50)),
         checkpoint_path=str(checkpoint_path),
         early_stopping_patience=int(cfg.get("early_stopping", {}).get("patience", 5)),
@@ -241,7 +253,6 @@ def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
         wandb_run=run,
     )
 
-    num_epochs = int(cfg.get("num_epochs", 1))
     if num_epochs <= 0:
         LOGGER.info("num_epochs=0: pipeline configurata, nessun batch elaborato.")
     else:

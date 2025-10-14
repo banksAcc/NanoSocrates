@@ -24,6 +24,19 @@ class _CountingSGD(torch.optim.SGD):
         return super().step(closure)
 
 
+class _CountingScheduler(torch.optim.lr_scheduler.LambdaLR):
+    """Learning-rate scheduler that tracks calls to ``step``."""
+
+    def __init__(self, optimizer):
+        self.step_calls = 0
+        super().__init__(optimizer, lr_lambda=lambda _: 1.0)
+        self.step_calls = 0
+
+    def step(self, epoch=None):  # type: ignore[override]
+        self.step_calls += 1
+        return super().step(epoch)
+
+
 class _DummyDataset(Dataset):
     def __init__(self, length: int):
         self.length = length
@@ -76,3 +89,34 @@ def test_optimizer_steps_flush_pending_gradients():
     assert (
         optimizer.step_calls == expected_steps
     ), f"Expected {expected_steps} optimizer steps, got {optimizer.step_calls}"
+
+
+def test_scheduler_steps_match_optimizer_steps():
+    grad_accum_steps = 3
+    dataset_length = 5
+
+    train_dataset = _DummyDataset(dataset_length)
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=False)
+    val_loader = DataLoader(_DummyDataset(1), batch_size=1)
+
+    model = _DummyModel()
+    optimizer = _CountingSGD(model.parameters(), lr=0.1)
+    scheduler = _CountingScheduler(optimizer)
+
+    loop = TrainingLoop(
+        model=model,
+        optimizer=optimizer,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        scheduler=scheduler,
+        device="cpu",
+        use_amp=False,
+        grad_accum_steps=grad_accum_steps,
+        log_every_n_steps=10,
+    )
+
+    loop._train_epoch(epoch=1)
+
+    expected_steps = math.ceil(dataset_length / grad_accum_steps)
+    assert optimizer.step_calls == expected_steps
+    assert scheduler.step_calls == expected_steps
