@@ -8,6 +8,8 @@ special_tokens:
   - "<SUBJ>"
   - "<PRED>"
   - "<OBJ>"
+  - "<OBJ_LIST>"
+  - "|"
   - "<RDF2Text>"
   - "<Text2RDF>"
   - "<CONTINUERDF>"

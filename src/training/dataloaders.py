@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 import random
 import math
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Mapping, Sequence
 
 import torch
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.utils.io import read_jsonl
+from src.utils.special_tokens import (
+    REQUIRED_SPECIAL_TOKENS,
+    RDF_LIST_SEPARATOR_TOKEN,
+    RDF_OBJECT_LIST_TOKEN,
+)
+
+LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
@@ -73,6 +81,43 @@ def _encode(tokenizer: Any, text: str) -> List[int]:
     if isinstance(encoded, (list, tuple)):
         return [int(tok) for tok in encoded]
     return list(encoded)
+
+
+def _token_to_id(tokenizer: Any, token: str) -> int | None:
+    """Safely resolve *token* to its integer id if present in the vocabulary."""
+
+    lookup = getattr(tokenizer, "token_to_id", None)
+    if callable(lookup):
+        token_id = lookup(token)
+        return int(token_id) if token_id is not None else None
+    return None
+
+
+def _ensure_special_tokens(tokenizer: Any) -> None:
+    """Ensure newly introduced special tokens exist in the loaded tokenizer."""
+
+    missing = [tok for tok in REQUIRED_SPECIAL_TOKENS if _token_to_id(tokenizer, tok) is None]
+    if not missing:
+        return
+
+    added = 0
+    add_special = getattr(tokenizer, "add_special_tokens", None)
+    if callable(add_special):
+        added = add_special(list(missing))
+    else:
+        add_tokens = getattr(tokenizer, "add_tokens", None)
+        if callable(add_tokens):
+            added = add_tokens(list(missing))
+
+    if added:
+        LOGGER.debug("Added runtime special tokens: %s", missing)
+
+    for token in missing:
+        if _token_to_id(tokenizer, token) is None:
+            raise ValueError(
+                "Tokenizer privo del token speciale richiesto '%s'. Aggiorna il vocabolario o rigenera il BPE."
+                % token
+            )
 
 
 @dataclass
@@ -154,6 +199,102 @@ def _normalise_span_payload(spans: Any) -> List[tuple[int, int]]:
     return normalised
 
 
+def _compact_rdf_input(text: str) -> str:
+    """Group repeated triples by subject/predicate to shorten RDF sequences."""
+
+    if not text or RDF_OBJECT_LIST_TOKEN in text:
+        return text
+
+    if "<SOT>" not in text or "<OBJ>" not in text:
+        return text
+
+    tokens = text.split()
+    prefix_tokens: List[str] = []
+    suffix_tokens: List[str] = []
+    groups: "OrderedDict[tuple[str, str], List[str]]" = OrderedDict()
+    order: List[tuple[str, str]] = []
+
+    i = 0
+    n = len(tokens)
+    while i < n and tokens[i] != "<SOT>":
+        prefix_tokens.append(tokens[i])
+        i += 1
+
+    while i < n:
+        if tokens[i] != "<SOT>":
+            suffix_tokens = tokens[i:]
+            break
+
+        i += 1
+        if i >= n or tokens[i] != "<SUBJ>":
+            return text
+        i += 1
+
+        subj_tokens: List[str] = []
+        while i < n and tokens[i] not in {"<PRED>", "<SOT>", "<EOT>"}:
+            subj_tokens.append(tokens[i])
+            i += 1
+        if i >= n or tokens[i] != "<PRED>":
+            return text
+        i += 1
+
+        pred_tokens: List[str] = []
+        while i < n and tokens[i] not in {"<OBJ>", "<SOT>", "<EOT>"}:
+            pred_tokens.append(tokens[i])
+            i += 1
+        if i >= n or tokens[i] != "<OBJ>":
+            return text
+        i += 1
+
+        obj_tokens: List[str] = []
+        while i < n and tokens[i] not in {"<EOT>", "<SOT>"}:
+            obj_tokens.append(tokens[i])
+            i += 1
+        if i >= n or tokens[i] != "<EOT>":
+            return text
+        i += 1
+
+        subj_text = " ".join(subj_tokens).strip()
+        pred_text = " ".join(pred_tokens).strip()
+        obj_text = " ".join(obj_tokens).strip()
+        key = (subj_text, pred_text)
+
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(obj_text)
+
+    if not any(len(values) > 1 for values in groups.values()):
+        return text
+
+    parts: List[str] = []
+    if prefix_tokens:
+        parts.append(" ".join(prefix_tokens))
+
+    for subj_text, pred_text in order:
+        objects = groups.get((subj_text, pred_text), [])
+        block: List[str] = ["<SOT>", "<SUBJ>"]
+        if subj_text:
+            block.append(subj_text)
+        block.append("<PRED>")
+        if pred_text:
+            block.append(pred_text)
+        if len(objects) > 1:
+            block.append(RDF_OBJECT_LIST_TOKEN)
+            block.append(f" {RDF_LIST_SEPARATOR_TOKEN} ".join(obj for obj in objects if obj))
+        else:
+            block.append("<OBJ>")
+            if objects:
+                block.append(objects[0])
+        block.append("<EOT>")
+        parts.append(" ".join(tok for tok in block if tok).strip())
+
+    if suffix_tokens:
+        parts.append(" ".join(suffix_tokens))
+
+    return " ".join(part for part in parts if part).strip()
+
+
 def _iter_examples(
     path: str,
     tokenizer: Any,
@@ -164,8 +305,21 @@ def _iter_examples(
 ) -> Iterator[Seq2SeqExample]:
     """Yield tokenised examples from a JSONL file."""
     inferred_task = _infer_task_from_path(path)
+    pad_id = _get_pad_id(tokenizer)
+    sot_id = _token_to_id(tokenizer, "<SOT>")
+    eot_id = _token_to_id(tokenizer, "<EOT>")
+    if sot_id is None:
+        fallback = eot_id if eot_id is not None else pad_id
+        if fallback is None:
+            raise ValueError("Tokenizer privo di token di avvio (<SOT>, <EOT> o <pad>).")
+        sot_id = int(fallback)
+    prefix_len = 1 if sot_id is not None else 0
+    suffix_len = 1 if eot_id is not None else 0
+    _ensure_special_tokens(tokenizer)
+
     for record in read_jsonl(path):
         source = str(record.get("input") or record.get("source") or record.get("text") or "")
+        source = _compact_rdf_input(source)
         target = str(record.get("target") or record.get("output") or record.get("label") or "")
         if not source or not target:
             continue
@@ -174,7 +328,16 @@ def _iter_examples(
         task_name = _normalise_task_name(task_hint, task_name)
 
         input_ids = _truncate(_encode(tokenizer, source), max_len)
-        label_ids = _truncate(_encode(tokenizer, target), max_len)
+        # Encode targets keeping room for start/end control tokens so the
+        # decoder receives the same prompts used during inference.
+        prefix: List[int] = [int(sot_id)] if sot_id is not None else []
+        suffix: List[int] = [int(eot_id)] if eot_id is not None else []
+
+        content_budget = max(0, max_len - prefix_len - suffix_len)
+        content_ids = _truncate(_encode(tokenizer, target), content_budget)
+        label_ids = prefix + content_ids
+        if suffix and len(label_ids) < max_len:
+            label_ids.extend(suffix[: max(0, max_len - len(label_ids))])
 
         mask_positions: List[int] | None = None
         mask_lengths: List[int] | None = None
@@ -186,12 +349,13 @@ def _iter_examples(
             )
             spans = _normalise_span_payload(raw_spans)
             if not spans and "<mask>" in source.lower():
-                spans = [(0, len(label_ids))] if label_ids else []
+                spans = [(0, len(content_ids))] if content_ids else []
 
             if spans:
                 valid_positions: List[int] = []
                 valid_lengths: List[int] = []
-                seq_len = len(label_ids)
+                offset = max(0, prefix_len - 1)
+                seq_len = len(content_ids)
                 for start, length in spans:
                     if length <= 0:
                         continue
@@ -203,7 +367,7 @@ def _iter_examples(
                     length = max(0, end - start)
                     if length == 0:
                         continue
-                    valid_positions.append(int(start))
+                    valid_positions.append(int(start + offset))
                     valid_lengths.append(int(length))
                 if valid_positions:
                     mask_positions = valid_positions

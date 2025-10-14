@@ -18,7 +18,12 @@ from __future__ import annotations
 
 from typing import Optional
 
+import logging
+
 import torch
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _select_start_token_id(tok, eot_id: Optional[int] = None) -> int:
@@ -48,6 +53,9 @@ def greedy_decode(
     input_text: str,
     max_new_tokens: int = 128,
     device: str = "cpu",
+    *,
+    min_new_tokens: int = 1,
+    debug: bool = False,
 ):
     """Esegue il decoding greedy restituendo gli ID generati.
 
@@ -67,21 +75,48 @@ def greedy_decode(
     start_id = _select_start_token_id(tok, eot_id)
     y = torch.tensor([[start_id]], dtype=torch.long, device=device)
 
-    for _ in range(max_new_tokens):
+    for step in range(max_new_tokens):
         out = model(inp, att, decoder_input_ids=y)
-        next_id = out["logits"][:, -1, :].argmax(-1, keepdim=True)  # greedy
+        logits_step = out["logits"][:, -1, :]
+        generated_len = y.size(1) - 1
+        if eot_id is not None and generated_len < int(max(0, min_new_tokens)):
+            logits_step = logits_step.clone()
+            min_val = torch.finfo(logits_step.dtype).min
+            logits_step[..., int(eot_id)] = min_val
+        next_id = logits_step.argmax(-1, keepdim=True)
         y = torch.cat([y, next_id], dim=1)
-        if eot_id is not None and int(next_id.item()) == int(eot_id):
+        token_id = int(next_id.item())
+        if debug:
+            LOGGER.debug("[decode] step=%d token_id=%d", step, token_id)
+        if eot_id is not None and token_id == int(eot_id):
             break
-    return y[0].tolist()
+    ids = y[0].tolist()
+    if debug:
+        LOGGER.debug("[decode] generated ids=%s", ids)
+    return ids
 
 
 @torch.no_grad()
 def decode_to_text(model, tok, input_text: str, **kwargs) -> str:
     """Wrapper pratico che nasconde la rimozione del token iniziale."""
 
-    ids = greedy_decode(model, tok, input_text, **kwargs)
+    return_ids = bool(kwargs.pop("return_ids", False))
+    debug = bool(kwargs.pop("debug", False))
+    min_new_tokens = int(kwargs.pop("min_new_tokens", 1))
+    ids = greedy_decode(
+        model,
+        tok,
+        input_text,
+        min_new_tokens=min_new_tokens,
+        debug=debug,
+        **kwargs,
+    )
     start_id = _select_start_token_id(tok)
     if ids and ids[0] == start_id:
         ids = ids[1:]
-    return tok.tk.decode(ids)
+    text = tok.tk.decode(ids)
+    if debug:
+        LOGGER.debug("[decode] decoded text='%s'", text)
+    if return_ids:
+        return text, ids
+    return text

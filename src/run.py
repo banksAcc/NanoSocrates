@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import random
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -14,7 +15,8 @@ import numpy as np
 import torch
 from tokenizers import Tokenizer
 
-from src.eval.evaluate import evaluate_from_config
+from src.decoding.base import decode_to_text
+from src.eval.evaluate import evaluate_from_config, load_model_and_tokenizer
 from src.data.builders import build_and_cache_datasets
 from src.model.transformer import TinySeq2Seq
 from src.training.dataloaders import create_multitask_dataloader
@@ -28,8 +30,16 @@ from src.utils.config import (
     resolve_checkpoint_reference,
 )
 from src.utils.wandb_utils import flatten_eval_metrics, maybe_init_wandb
+from src.tokenizer.tokenizer_io import ensure_runtime_special_tokens
 
 LOGGER = logging.getLogger(__name__)
+
+TASK_MARKERS = {
+    "text2rdf": "<Text2RDF>",
+    "rdf2text": "<RDF2Text>",
+    "rdfcomp2": "<CONTINUERDF>",
+    "rdfcomp1": "<MASK>",
+}
 
 
 def _get_pad_id(tokenizer: Tokenizer) -> int:
@@ -170,6 +180,7 @@ def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
     if not tokenizer_path:
         raise ValueError("Specificare 'tokenizer_file' nel config di training.")
     tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    ensure_runtime_special_tokens(tokenizer)
 
     dataset_payload = build_and_cache_datasets(cfg, tokenizer)
     train_dataset = dataset_payload["train"]
@@ -318,6 +329,62 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
                 LOGGER.warning("Chiusura wandb fallita: %s", exc)
 
 
+def _prepare_predict_input(text: str, task: str | None) -> str:
+    """Attach the task marker to *text* when necessary for decoding."""
+    text = text.strip()
+    if task:
+        marker = TASK_MARKERS.get(task)
+        if marker and marker not in text:
+            if task == "rdfcomp1" and "<MASK>" not in text:
+                text = f"{text} <MASK>".strip()
+            else:
+                text = f"{text} {marker}".strip()
+    return text
+
+
+def cmd_predict(args: argparse.Namespace) -> None:
+    """Entry point for the ``predict`` sub-command."""
+    overrides: Dict[str, Any] = {}
+    if getattr(args, "model_override", None):
+        overrides = apply_overrides({}, args.model_override)
+
+    model, tokenizer, device, _ = load_model_and_tokenizer(
+        args.tokenizer,
+        args.checkpoint,
+        device=args.device,
+        overrides=overrides,
+    )
+
+    prepared_input = _prepare_predict_input(args.input, args.task)
+    prediction, token_ids = decode_to_text(
+        model,
+        tokenizer,
+        prepared_input,
+        max_new_tokens=args.max_new_tokens,
+        device=device,
+        return_ids=True,
+    )
+    result = {
+        "task": args.task,
+        "input": args.input,
+        "prepared_input": prepared_input,
+        "prediction": prediction,
+        "prediction_token_ids": token_ids,
+        "prediction_length_chars": len(prediction.strip()),
+        "prediction_length_tokens": len(prediction.split()),
+    }
+
+    indent = 2 if sys.stdout.isatty() else None
+    print(json.dumps(result, ensure_ascii=False, indent=indent))
+
+    if getattr(args, "output", None):
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the top-level CLI parser with the train/overfit/evaluate commands."""
     parser = argparse.ArgumentParser(description="Pipeline di training NanoSocrates")
@@ -333,6 +400,25 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_overrides(p_eval)
     p_eval.add_argument("--output", help="File JSON per salvare il report", default=None)
 
+    p_predict = sub.add_parser("predict", help="Genera una predizione per un singolo input")
+    p_predict.add_argument("--checkpoint", required=True)
+    p_predict.add_argument("--tokenizer", required=True)
+    p_predict.add_argument("--input", required=True, help="Input testuale o RDF linearizzato")
+    p_predict.add_argument("--task", choices=sorted(TASK_MARKERS))
+    p_predict.add_argument("--device", default="cuda")
+    p_predict.add_argument("--max-new-tokens", type=int, default=128)
+    p_predict.add_argument(
+        "--model-override",
+        nargs="*",
+        default=[],
+        help="Override opzionali dei parametri del modello (chiave=valore)",
+    )
+    p_predict.add_argument(
+        "--output",
+        help="File JSON su cui salvare input e predizione per ulteriori analisi",
+        default=None,
+    )
+
     return parser
 
 
@@ -346,6 +432,8 @@ def main() -> None:
         cmd_overfit(args)
     elif args.command == "evaluate":
         cmd_evaluate(args)
+    elif args.command == "predict":
+        cmd_predict(args)
     else:  # pragma: no cover - guardia difensiva
         raise ValueError(f"Comando sconosciuto: {args.command}")
 
