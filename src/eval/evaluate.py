@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from functools import partial
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional
+from pathlib import Path
+from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import torch
 from torch.utils.data import DataLoader
 
 from src.decoding.base import decode_to_text
-from src.eval.metrics import (
-    compute_accuracy,
-    compute_text_generation_metrics,
-    compute_triple_metrics,
-)
+from src.eval.metrics import compute_accuracy, compute_text_generation_metrics, compute_triple_metrics
 from src.model.transformer import TinySeq2Seq
 from src.tokenizer.tokenizer_io import TokWrapper
 from src.training.dataloaders import JsonlSeq2Seq, pad_collate
@@ -138,11 +136,16 @@ def _generate_predictions(
     dataset: JsonlSeq2Seq,
     device: str,
     max_new_tokens: int,
-) -> tuple[List[str], List[str], List[str]]:
+    *,
+    normalise: bool = True,
+    return_raw: bool = False,
+) -> tuple[List[str], List[str], List[str]] | tuple[List[str], List[str], List[str], List[str], List[str]]:
     """Genera predizioni greedy restituendo anche i task di provenienza."""
 
     predictions: List[str] = []
     references: List[str] = []
+    raw_predictions: List[str] = []
+    raw_references: List[str] = []
     tasks: List[str] = []
 
     for ex in dataset.items:
@@ -187,10 +190,125 @@ def _generate_predictions(
             max_new_tokens=max_new_tokens,
             device=device,
         )
-        predictions.append(_normalise_text(pred))
-        references.append(_normalise_text(target))
+        raw_predictions.append(pred)
+        raw_references.append(target)
+        if normalise:
+            predictions.append(_normalise_text(pred))
+            references.append(_normalise_text(target))
+        else:
+            predictions.append(pred)
+            references.append(target)
         tasks.append(str(task_name or "unknown"))
+    if return_raw:
+        return predictions, references, tasks, raw_predictions, raw_references
     return predictions, references, tasks
+
+
+def _extract_example_fields(example) -> Tuple[str, str, str, Optional[str]]:
+    """Return raw input/target/task/film strings from a dataset item."""
+
+    if isinstance(example, Mapping):
+        source = str(
+            example.get("raw_input")
+            or example.get("input")
+            or example.get("source")
+            or ""
+        )
+        target = str(
+            example.get("raw_target")
+            or example.get("target")
+            or example.get("output")
+            or example.get("label")
+            or ""
+        )
+        task_name = str(example.get("task") or example.get("task_name") or "")
+        film = example.get("film")
+    else:
+        source = str(
+            getattr(example, "input_text", None)
+            or getattr(example, "input", None)
+            or ""
+        )
+        target = str(
+            getattr(example, "target_text", None)
+            or getattr(example, "target", None)
+            or getattr(example, "label", None)
+            or ""
+        )
+        task_name = str(getattr(example, "task", "") or "")
+        film = getattr(example, "film", None)
+    return source, target, task_name, film
+
+
+def _build_preview_records(
+    dataset: JsonlSeq2Seq,
+    predictions: Sequence[str],
+    references: Sequence[str],
+    raw_predictions: Sequence[str],
+    tasks: Sequence[str],
+    *,
+    limit: int,
+    per_task: bool = True,
+) -> Dict[str, List[Dict[str, object]]]:
+    """Create a limited set of per-task preview records for debugging."""
+
+    if limit <= 0:
+        return {}
+
+    previews: Dict[str, List[Dict[str, object]]] = defaultdict(list)
+    counters: Counter[str] = Counter()
+    total_added = 0
+
+    for idx, (pred, ref, raw_pred, task_tag) in enumerate(
+        zip(predictions, references, raw_predictions, tasks)
+    ):
+        bucket = str(task_tag or "unknown")
+        if per_task:
+            if counters[bucket] >= limit:
+                continue
+        else:
+            if total_added >= limit:
+                break
+        source, target, dataset_task, film = _extract_example_fields(dataset.items[idx])
+        record = {
+            "index": idx,
+            "task": bucket,
+            "dataset_task": dataset_task,
+            "film": film,
+            "input": source,
+            "target": target,
+            "prediction": raw_pred,
+            "prediction_normalised": pred,
+            "target_normalised": ref,
+            "exact_match": bool(pred == ref),
+        }
+        previews[bucket].append(record)
+        counters[bucket] += 1
+        total_added += 1
+    return dict(previews)
+
+
+def _write_preview_files(
+    previews: Mapping[str, List[Dict[str, object]]],
+    *,
+    output_dir: Path,
+    split: str,
+    task: str,
+) -> Optional[Path]:
+    """Persist preview records to disk and return the output path."""
+
+    if not previews:
+        return None
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = output_dir / f"{split}_{task}.jsonl"
+    with preview_path.open("w", encoding="utf-8") as f:
+        for task_name, records in previews.items():
+            for record in records:
+                payload = {"group": task_name, **record}
+                json.dump(payload, f, ensure_ascii=False)
+                f.write("\n")
+    return preview_path
 
 
 def _group_by_task(
@@ -259,6 +377,24 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
     decode_cfg = config.get("decoding") or {}
     max_new_tokens = int(decode_cfg.get("max_new_tokens", max_len))
 
+    preview_cfg = config.get("preview") or {}
+    preview_limit_raw = preview_cfg.get("limit", config.get("preview_samples", 0))
+    try:
+        preview_limit = int(preview_limit_raw)
+    except (TypeError, ValueError):
+        preview_limit = 0
+    per_task = preview_cfg.get("per_task", True)
+    if isinstance(per_task, str):
+        per_task = per_task.lower() not in {"false", "0", "no"}
+    else:
+        per_task = bool(per_task)
+    preview_output_dir_raw = (
+        preview_cfg.get("output_dir")
+        or preview_cfg.get("dir")
+        or config.get("preview_output_dir")
+    )
+    preview_output_dir = Path(preview_output_dir_raw) if preview_output_dir_raw else None
+
     batch_size = int(config.get("batch_size", 8))
     num_workers = int(config.get("num_workers", 0))
     pin_memory = device == "cuda"
@@ -305,9 +441,26 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                 pin_memory=pin_memory,
             )
             loss = _compute_loss(model, dataloader, device)
-            preds, refs, task_tags = _generate_predictions(
-                model, tokenizer, dataset, device, max_new_tokens
-            )
+            want_preview = preview_limit > 0
+            if want_preview:
+                preds, refs, task_tags, raw_preds, _ = _generate_predictions(
+                    model,
+                    tokenizer,
+                    dataset,
+                    device,
+                    max_new_tokens,
+                    return_raw=True,
+                )
+            else:
+                preds, refs, task_tags = _generate_predictions(
+                    model,
+                    tokenizer,
+                    dataset,
+                    device,
+                    max_new_tokens,
+                    return_raw=False,
+                )
+                raw_preds = preds
             grouped = _group_by_task(preds, refs, task_tags)
             metrics_payload: Dict[str, object] = {}
             for t_name, bucket in grouped.items():
@@ -320,12 +473,37 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
             if not metrics_payload:
                 metrics_payload[task_name] = {"samples": len(dataset)}
 
+            previews = {}
+            if want_preview:
+                previews = _build_preview_records(
+                    dataset,
+                    preds,
+                    refs,
+                    raw_preds,
+                    task_tags,
+                    limit=preview_limit,
+                    per_task=per_task,
+                )
+
             split_payload["tasks"][task_name] = {
                 "path": str(path),
                 "loss": float(loss),
                 "num_samples": len(dataset),
                 "metrics": metrics_payload,
             }
+            if previews:
+                split_payload["tasks"][task_name]["preview"] = previews
+                if preview_output_dir is not None:
+                    preview_file = _write_preview_files(
+                        previews,
+                        output_dir=preview_output_dir,
+                        split=split,
+                        task=task_name,
+                    )
+                    if preview_file is not None:
+                        split_payload["tasks"][task_name]["preview_file"] = str(
+                            preview_file
+                        )
             weighted_loss += loss * len(dataset)
             total_samples += len(dataset)
 
