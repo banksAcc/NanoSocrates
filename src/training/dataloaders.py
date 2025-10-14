@@ -172,7 +172,7 @@ def _normalise_span_payload(spans: Any) -> List[tuple[int, int]]:
     return normalised
 
 
-def _compact_rdf_input(text: str) -> str:
+def compact_rdf(text: str) -> str:
     """Group repeated triples by subject/predicate to shorten RDF sequences."""
 
     if not text or RDF_OBJECT_LIST_TOKEN in text:
@@ -290,7 +290,7 @@ def _iter_examples(
     suffix_len = 1 if eot_id is not None else 0
     for record in read_jsonl(path):
         source = str(record.get("input") or record.get("source") or record.get("text") or "")
-        source = _compact_rdf_input(source)
+        source = compact_rdf(source)
         target = str(record.get("target") or record.get("output") or record.get("label") or "")
         if not source or not target:
             continue

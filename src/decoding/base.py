@@ -57,6 +57,7 @@ def greedy_decode(
     min_new_tokens: int = 1,
     debug: bool = False,
     forbidden_token_ids: Optional[Sequence[int]] = None,
+    **unused_generation_kwargs,
 ):
     """Esegue il decoding greedy restituendo gli ID generati.
 
@@ -81,6 +82,12 @@ def greedy_decode(
         for token_id in (forbidden_token_ids or [])
         if token_id is not None
     )
+
+    if unused_generation_kwargs:
+        LOGGER.debug(
+            "[decode] ignoring unsupported generation kwargs: %s",
+            sorted(unused_generation_kwargs),
+        )
 
     for step in range(max_new_tokens):
         out = model(inp, att, decoder_input_ids=y)

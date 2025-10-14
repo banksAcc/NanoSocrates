@@ -1,0 +1,1 @@
+{"input": "<SOT> <SUBJ> dbr:FilmC <PRED> dbo:starring <OBJ> dbr:Actor1 <EOT>", "target": "Starring Actor1.", "task": "rdf2text", "film": "dbr:FilmC"}

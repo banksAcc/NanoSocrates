@@ -8,8 +8,10 @@ num_workers: 2
 device: "cuda"
 output_json: "reports/multitask_default_eval.json"
 
-decoding:
+generation_params:
   max_new_tokens: 512
+  min_new_tokens: 1
+  debug_generation: false
 
 # abilita la valutazione delle maschere quando il checkpoint le supporta
 enable_entity_spans: false
