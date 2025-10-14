@@ -10,6 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
+from pyparsing import Diagnostics
 import torch
 from torch.utils.data import DataLoader
 
@@ -617,7 +618,6 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                     if getattr(longest_example, "film", None) is not None
                     else None
                 )
-
             empty_predictions = diagnostics["prediction_chars"]["zeros"]
             total_predictions = diagnostics["prediction_chars"]["count"]
             if total_predictions:
@@ -639,7 +639,7 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                 "loss": float(loss),
                 "num_samples": len(dataset),
                 "metrics": metrics_payload,
-                "diagnostics": diagnostics,
+                "diagnostics": Diagnostics,
             }
             if previews:
                 split_payload["tasks"][task_name]["preview"] = previews
