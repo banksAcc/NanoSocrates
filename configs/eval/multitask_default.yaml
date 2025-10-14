@@ -2,17 +2,17 @@ model_alias: "multitask_default"
 checkpoint: "overfit.pt"  # usa --override checkpoint=... oppure aggiorna CHECKPOINT_ALIASES
 
 tokenizer_file: "data/vocab/bpe.json"
-max_len: 256
+max_len: 512
 batch_size: 8
 num_workers: 2
 device: "cuda"
 output_json: "reports/multitask_default_eval.json"
 
 decoding:
-  max_new_tokens: 160
+  max_new_tokens: 512
 
 # abilita la valutazione delle maschere quando il checkpoint le supporta
-enable_entity_spans: true
+enable_entity_spans: false
 
 # path split per task
 tasks:

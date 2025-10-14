@@ -2,30 +2,30 @@
   "total_films": 20,
   "per_split": {
     "train": [
-      "dbr:200_Meters",
-      "dbr:Alifa",
-      "dbr:Because_of_the_Cats",
-      "dbr:Bhale_Rangadu",
-      "dbr:Calling_the_Ghosts",
-      "dbr:Dean_(film)",
-      "dbr:El_gran_circo_Chamorro",
-      "dbr:Eva_Pflug",
-      "dbr:John_Paul_Jones_(film)",
-      "dbr:Listen,_Darling",
-      "dbr:Silent_film",
-      "dbr:Victor_Lewis-Smith"
+      "dbr:2012:_Kurse_a_di_Xtabai",
+      "dbr:Apan_Por",
+      "dbr:Bhagwaan_Dada",
+      "dbr:Blood-C:_The_Last_Dark",
+      "dbr:Honourable_Mention",
+      "dbr:How_to_Eat_Fried_Worms_(film)",
+      "dbr:Julieta_(film)",
+      "dbr:Leah_Gibson",
+      "dbr:Only_a_Woman_(1941_film)",
+      "dbr:Rosamund_Hanson",
+      "dbr:Rudra_Tandava",
+      "dbr:Silent_film"
     ],
     "val": [
-      "dbr:Alice_Nunn",
-      "dbr:Cyril_J._Mockridge",
-      "dbr:Erotic_thriller",
-      "dbr:Sammy_Going_South"
+      "dbr:Aditya_Kapadia",
+      "dbr:Santa's_Little_Helper_(film)",
+      "dbr:Sean_Whalen",
+      "dbr:Thilakan"
     ],
     "test": [
-      "dbr:Aditya_Kapadia",
-      "dbr:Holy_Ghost_People_(2013_film)",
-      "dbr:Lew_Landers",
-      "dbr:Say!_Young_Fellow"
+      "dbr:Alias_John_Preston",
+      "dbr:Beyond_the_Hills",
+      "dbr:Documentary_film",
+      "dbr:Sulabha_Deshpande"
     ]
   },
   "tasks": {

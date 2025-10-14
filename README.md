@@ -62,14 +62,14 @@ pip install -r requirements.txt
 1. **Raccogli le sorgenti**
 
    ```bash
-   python scripts/fetch_dbpedia.py --config configs/data/dbpedia.yaml --out data/raw/dbpedia_triples.jsonl
+   python -m scripts.fetch_dbpedia --config configs/data/dbpedia.yaml --out data/raw/dbpedia_triples.jsonl
 
-   python scripts/fetch_wikipedia.py --config configs/data/wikipedia.yaml --in data/raw/dbpedia_triples.jsonl --out data/raw/wikipedia_intro.jsonl
+   python -m scripts.fetch_wikipedia --config configs/data/wikipedia.yaml --in data/raw/dbpedia_triples.jsonl --out data/raw/wikipedia_intro.jsonl
    ```
 
 2. **Costruisci il dataset multi-task**
    ```bash
-   python scripts/build_dataset.py --config configs/data/build.yaml --dbp data/raw/dbpedia_triples.jsonl --wiki data/raw/wikipedia_intro.jsonl --outdir data/processed --emit_tasks
+   python -m scripts.build_dataset --config configs/data/build.yaml --dbp data/raw/dbpedia_triples.jsonl --wiki data/raw/wikipedia_intro.jsonl --outdir data/processed --emit_tasks
    ```
 3. **Addestra (o aggiorna) il tokenizer**
    ```bash

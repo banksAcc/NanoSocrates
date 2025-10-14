@@ -6,7 +6,7 @@
       "tasks": {
         "text2rdf": {
           "path": "data/processed/toy/text2rdf.val.jsonl",
-          "loss": 15.754645347595215,
+          "loss": 285.7745361328125,
           "num_samples": 4,
           "metrics": {
             "text2rdf": {
@@ -19,20 +19,20 @@
         },
         "rdf2text": {
           "path": "data/processed/toy/rdf2text.val.jsonl",
-          "loss": 30.17499351501465,
+          "loss": 378.1166076660156,
           "num_samples": 4,
           "metrics": {
             "rdf2text": {
-              "bleu": 3.751811322012395e-08,
-              "rouge_l": 0.38393756294058407,
-              "meteor": 0.34435261707988984,
+              "bleu": 0.0,
+              "rouge_l": 0.0,
+              "meteor": 0.0,
               "samples": 4
             }
           }
         },
         "rdfcomp1": {
           "path": "data/processed/toy/rdfcomp1.val.jsonl",
-          "loss": 33.06407165527344,
+          "loss": 288.0604553222656,
           "num_samples": 4,
           "metrics": {
             "rdfcomp1": {
@@ -43,7 +43,7 @@
         },
         "rdfcomp2": {
           "path": "data/processed/toy/rdfcomp2.val.jsonl",
-          "loss": 14.727425575256348,
+          "loss": 279.06524658203125,
           "num_samples": 4,
           "metrics": {
             "rdfcomp2": {
@@ -55,14 +55,14 @@
           }
         }
       },
-      "avg_loss": 23.430284023284912,
+      "avg_loss": 307.75421142578125,
       "num_samples": 16
     },
     "test": {
       "tasks": {
         "text2rdf": {
           "path": "data/processed/toy/text2rdf.test.jsonl",
-          "loss": 17.89853858947754,
+          "loss": 287.9832763671875,
           "num_samples": 4,
           "metrics": {
             "text2rdf": {
@@ -75,20 +75,20 @@
         },
         "rdf2text": {
           "path": "data/processed/toy/rdf2text.test.jsonl",
-          "loss": 29.4837589263916,
+          "loss": 379.7476501464844,
           "num_samples": 4,
           "metrics": {
             "rdf2text": {
-              "bleu": 3.751811322012395e-08,
-              "rouge_l": 0.35498137802607077,
-              "meteor": 0.28153153153153154,
+              "bleu": 0.0,
+              "rouge_l": 0.0,
+              "meteor": 0.0,
               "samples": 4
             }
           }
         },
         "rdfcomp1": {
           "path": "data/processed/toy/rdfcomp1.test.jsonl",
-          "loss": 39.42225646972656,
+          "loss": 297.5293884277344,
           "num_samples": 4,
           "metrics": {
             "rdfcomp1": {
@@ -99,7 +99,7 @@
         },
         "rdfcomp2": {
           "path": "data/processed/toy/rdfcomp2.test.jsonl",
-          "loss": 16.12462615966797,
+          "loss": 278.64129638671875,
           "num_samples": 4,
           "metrics": {
             "rdfcomp2": {
@@ -111,7 +111,7 @@
           }
         }
       },
-      "avg_loss": 25.732295036315918,
+      "avg_loss": 310.97540283203125,
       "num_samples": 16
     }
   }
