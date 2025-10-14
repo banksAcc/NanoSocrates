@@ -151,18 +151,16 @@ class TrainingLoop:
 
             metric_value = val_metrics.get(self.es_metric)
 
-            if self.scheduler:
-                # Some schedulers use metrics (e.g., ReduceLROnPlateau)
-                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    if metric_value is None:
-                        logger.warning(
-                            "Scheduler expects metric '%s' but it was missing; skipping scheduler step for this epoch.",
-                            self.es_metric,
-                        )
-                    else:
-                        self.scheduler.step(metric_value)
+            if self.scheduler and isinstance(
+                self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
+            ):
+                if metric_value is None:
+                    logger.warning(
+                        "Scheduler expects metric '%s' but it was missing; skipping scheduler step for this epoch.",
+                        self.es_metric,
+                    )
                 else:
-                    self.scheduler.step()
+                    self.scheduler.step(metric_value)
 
             # Log metrics to wandb
             if self.wandb_run:
@@ -243,6 +241,7 @@ class TrainingLoop:
                     self.scaler.update()
                 else:
                     self.optimizer.step()
+                self._step_batch_scheduler()
                 self.optimizer.zero_grad(set_to_none=True)
 
             # Update progress bar with smoothed loss
@@ -280,6 +279,7 @@ class TrainingLoop:
                 self.scaler.update()
             else:
                 self.optimizer.step()
+            self._step_batch_scheduler()
             self.optimizer.zero_grad(set_to_none=True)
 
         avg_loss = total_loss / num_batches
@@ -356,6 +356,13 @@ class TrainingLoop:
             logger.info(f"No improvement. Early stopping counter: {self.es_counter}/{self.es_patience}")
 
         return self.es_counter >= self.es_patience
+
+    def _step_batch_scheduler(self) -> None:
+        """Advance per-step schedulers keeping pace with optimizer updates."""
+        if self.scheduler and not isinstance(
+            self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
+        ):
+            self.scheduler.step()
 
     def _transfer_batch_to_device(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Moves a batch of data to the configured device."""
