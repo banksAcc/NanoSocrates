@@ -81,9 +81,7 @@ pip install -r requirements.txt
    ```
 5. **Valuta il checkpoint** (report JSON + metriche aggregate)
    ```bash
-   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml \
-       --override checkpoint=checkpoints/multitask_default/best.pt \
-       --output reports/multitask_default_eval.json
+   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override checkpoint=checkpoints/multitask_default/best.pt --output reports/multitask_default_eval.json
    # legacy wrapper → python -m scripts.eval_all --cfg configs/eval/multitask_default.yaml
    ```
 
@@ -98,7 +96,8 @@ pip install -r requirements.txt
 3. Esegui training e valutazione puntando ai nuovi file con il flag `--toy`:
    ```bash
    python -m src.run train --cfg configs/train/multitask_default.yaml --toy
-   python -m scripts.eval_all --cfg configs/eval/multitask_default.yaml --toy
+   
+   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override checkpoint=checkpoints/multitask_default/best.pt --output reports/multitask_default_eval.json --toy
    ```
 
 ### 2.4 Tutorial — sanity check (overfit di un batch)

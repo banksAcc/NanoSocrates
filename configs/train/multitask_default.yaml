@@ -37,8 +37,8 @@ layer_norm_epsilon: 1.0e-6
 max_len: 512
 
 # span masking per RDF Completion 1
-enable_entity_spans: true
-compute_span_metrics: true
+enable_entity_spans: false
+compute_span_metrics: false
 
 # training
 batch_size: 16

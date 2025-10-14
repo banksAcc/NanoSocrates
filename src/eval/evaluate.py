@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections import Counter, defaultdict
 from functools import partial
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
+from pyparsing import Diagnostics
 import torch
 from torch.utils.data import DataLoader
 
@@ -164,6 +166,7 @@ def _generate_predictions(
     dataset: JsonlSeq2Seq,
     device: str,
     max_new_tokens: int,
+    min_new_tokens: int = 0,
     *,
     normalise: bool = True,
     return_raw: bool = False,
@@ -512,6 +515,7 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                     dataset,
                     device,
                     max_new_tokens,
+                    min_new_tokens,
                     return_raw=True,
                 )
             else:
@@ -521,6 +525,7 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                     dataset,
                     device,
                     max_new_tokens,
+                    min_new_tokens,
                     return_raw=False,
                 )
                 raw_preds = preds
@@ -553,7 +558,7 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                 "loss": float(loss),
                 "num_samples": len(dataset),
                 "metrics": metrics_payload,
-                "diagnostics": diagnostics,
+                "diagnostics": Diagnostics,
             }
             if previews:
                 split_payload["tasks"][task_name]["preview"] = previews
