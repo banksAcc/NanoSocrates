@@ -22,6 +22,21 @@ from src.training.dataloaders import JsonlSeq2Seq, pad_collate
 
 LOGGER = logging.getLogger(__name__)
 
+
+STRUCTURAL_DECODE_TOKENS: tuple[str, ...] = (
+    "<SUBJ>",
+    "<PRED>",
+    "<OBJ>",
+    "<OBJ_LIST>",
+    "<Text2RDF>",
+    "<RDF2Text>",
+    "<CONTINUERDF>",
+    "<MASK>",
+)
+
+TEXTUAL_OUTPUT_TASKS: frozenset[str] = frozenset({"rdf2text", "rdfcomp1", "rdfcomp2"})
+
+
 def _select_device(want: Optional[str]) -> str:
     """Sceglie "cuda" solo se disponibile, altrimenti ripiega su CPU."""
 
@@ -184,6 +199,22 @@ def _generate_predictions(
     tasks: List[str] = []
     token_sequences: List[List[int]] = []
 
+    pad_token_id = getattr(tokenizer, "pad_id", None)
+    structural_token_ids: Tuple[int, ...] = tuple(
+        int(token_id)
+        for token_id in (
+            tokenizer.token_to_id(token) for token in STRUCTURAL_DECODE_TOKENS
+        )
+        if token_id is not None
+    )
+    base_forbidden_ids: Tuple[int, ...]
+    if pad_token_id is None:
+        base_forbidden_ids = structural_token_ids
+    else:
+        base_forbidden_ids = tuple(
+            dict.fromkeys(structural_token_ids + (int(pad_token_id),))
+        )
+
     for ex in dataset.items:
         source: str = ""
         target: str = ""
@@ -219,6 +250,9 @@ def _generate_predictions(
         if not source:
             continue
 
+        task_slug = str(task_name or "").lower()
+        forbidden_ids = base_forbidden_ids if task_slug in TEXTUAL_OUTPUT_TASKS else ()
+
         pred, token_ids = decode_to_text(
             model,
             tokenizer,
@@ -228,6 +262,7 @@ def _generate_predictions(
             min_new_tokens=min_new_tokens,
             debug=debug_generation,
             return_ids=True,
+            forbidden_token_ids=forbidden_ids,
         )
         raw_predictions.append(pred)
         raw_references.append(target)
@@ -618,6 +653,7 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                     if getattr(longest_example, "film", None) is not None
                     else None
                 )
+                
             empty_predictions = diagnostics["prediction_chars"]["zeros"]
             total_predictions = diagnostics["prediction_chars"]["count"]
             if total_predictions:
