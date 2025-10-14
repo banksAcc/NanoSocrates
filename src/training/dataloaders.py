@@ -75,6 +75,16 @@ def _encode(tokenizer: Any, text: str) -> List[int]:
     return list(encoded)
 
 
+def _token_to_id(tokenizer: Any, token: str) -> int | None:
+    """Safely resolve *token* to its integer id if present in the vocabulary."""
+
+    lookup = getattr(tokenizer, "token_to_id", None)
+    if callable(lookup):
+        token_id = lookup(token)
+        return int(token_id) if token_id is not None else None
+    return None
+
+
 @dataclass
 class Seq2SeqExample:
     """Represent a pre-tokenised sequence-to-sequence example."""
@@ -164,6 +174,16 @@ def _iter_examples(
 ) -> Iterator[Seq2SeqExample]:
     """Yield tokenised examples from a JSONL file."""
     inferred_task = _infer_task_from_path(path)
+    pad_id = _get_pad_id(tokenizer)
+    sot_id = _token_to_id(tokenizer, "<SOT>")
+    eot_id = _token_to_id(tokenizer, "<EOT>")
+    if sot_id is None:
+        fallback = eot_id if eot_id is not None else pad_id
+        if fallback is None:
+            raise ValueError("Tokenizer privo di token di avvio (<SOT>, <EOT> o <pad>).")
+        sot_id = int(fallback)
+    prefix_len = 1 if sot_id is not None else 0
+    suffix_len = 1 if eot_id is not None else 0
     for record in read_jsonl(path):
         source = str(record.get("input") or record.get("source") or record.get("text") or "")
         target = str(record.get("target") or record.get("output") or record.get("label") or "")
@@ -174,7 +194,16 @@ def _iter_examples(
         task_name = _normalise_task_name(task_hint, task_name)
 
         input_ids = _truncate(_encode(tokenizer, source), max_len)
-        label_ids = _truncate(_encode(tokenizer, target), max_len)
+        # Encode targets keeping room for start/end control tokens so the
+        # decoder receives the same prompts used during inference.
+        prefix: List[int] = [int(sot_id)] if sot_id is not None else []
+        suffix: List[int] = [int(eot_id)] if eot_id is not None else []
+
+        content_budget = max(0, max_len - prefix_len - suffix_len)
+        content_ids = _truncate(_encode(tokenizer, target), content_budget)
+        label_ids = prefix + content_ids
+        if suffix and len(label_ids) < max_len:
+            label_ids.extend(suffix[: max(0, max_len - len(label_ids))])
 
         mask_positions: List[int] | None = None
         mask_lengths: List[int] | None = None
@@ -186,12 +215,13 @@ def _iter_examples(
             )
             spans = _normalise_span_payload(raw_spans)
             if not spans and "<mask>" in source.lower():
-                spans = [(0, len(label_ids))] if label_ids else []
+                spans = [(0, len(content_ids))] if content_ids else []
 
             if spans:
                 valid_positions: List[int] = []
                 valid_lengths: List[int] = []
-                seq_len = len(label_ids)
+                offset = max(0, prefix_len - 1)
+                seq_len = len(content_ids)
                 for start, length in spans:
                     if length <= 0:
                         continue
@@ -203,7 +233,7 @@ def _iter_examples(
                     length = max(0, end - start)
                     if length == 0:
                         continue
-                    valid_positions.append(int(start))
+                    valid_positions.append(int(start + offset))
                     valid_lengths.append(int(length))
                 if valid_positions:
                     mask_positions = valid_positions
