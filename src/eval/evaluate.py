@@ -8,7 +8,7 @@ import os
 from collections import Counter, defaultdict
 from functools import partial
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 from pyparsing import Diagnostics
 import torch
@@ -53,6 +53,56 @@ def _normalise_text(text: str) -> str:
         return ""
     cleaned = [tok for tok in text.replace("\n", " ").split() if tok and tok != "<pad>"]
     return " ".join(cleaned).strip()
+
+
+def _to_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, str):
+        return value.lower() not in {"false", "0", "no"}
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _prepare_generation_params(
+    config: Mapping[str, object], default_max_len: int
+) -> tuple[int, int, bool, Dict[str, object]]:
+    """Merge generation settings from legacy ``decoding`` and new configs."""
+
+    params: Dict[str, object] = {}
+
+    legacy_decoding = config.get("decoding")
+    if isinstance(legacy_decoding, Mapping):
+        params.update(legacy_decoding)
+
+    # Allow nested ``model.generation_params`` or top-level ``generation_params``.
+    direct_params = config.get("generation_params")
+    if isinstance(direct_params, Mapping):
+        params.update(direct_params)
+    model_cfg = config.get("model")
+    if isinstance(model_cfg, Mapping):
+        nested_params = model_cfg.get("generation_params")
+        if isinstance(nested_params, Mapping):
+            params.update(nested_params)
+
+    max_tokens = params.pop("max_new_tokens", params.pop("max_length", default_max_len))
+    min_tokens = params.pop("min_new_tokens", params.pop("min_length", 1))
+    debug_raw = params.pop(
+        "debug_generation",
+        params.pop("debug_token_ids", params.pop("debug", False)),
+    )
+
+    max_new_tokens = _to_int(max_tokens, default_max_len)
+    min_new_tokens = max(0, _to_int(min_tokens, 1))
+    debug_generation = _to_bool(debug_raw, False)
+
+    return max_new_tokens, min_new_tokens, debug_generation, dict(params)
 
 
 def _summarise_lengths(lengths: Iterable[int]) -> Dict[str, float]:
@@ -186,6 +236,7 @@ def _generate_predictions(
     normalise: bool = True,
     return_raw: bool = False,
     debug_generation: bool = False,
+    generation_params: Mapping[str, object] | None = None,
 ) -> (
     tuple[List[str], List[str], List[str]]
     | tuple[List[str], List[str], List[str], List[str], List[str], List[List[int]]]
@@ -214,6 +265,20 @@ def _generate_predictions(
         base_forbidden_ids = tuple(
             dict.fromkeys(structural_token_ids + (int(pad_token_id),))
         )
+
+    extra_generation_kwargs = dict(generation_params or {})
+    for blocked_key in {
+        "max_new_tokens",
+        "max_length",
+        "min_new_tokens",
+        "min_length",
+        "debug_generation",
+        "debug",
+        "return_ids",
+        "device",
+        "forbidden_token_ids",
+    }:
+        extra_generation_kwargs.pop(blocked_key, None)
 
     for ex in dataset.items:
         source: str = ""
@@ -263,6 +328,7 @@ def _generate_predictions(
             debug=debug_generation,
             return_ids=True,
             forbidden_token_ids=forbidden_ids,
+            **extra_generation_kwargs,
         )
         raw_predictions.append(pred)
         raw_references.append(target)
@@ -477,21 +543,12 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
     )
 
     max_len = int(config.get("max_len", saved_cfg.get("max_len", 256)))
-    decode_cfg = config.get("decoding") or {}
-    max_new_tokens = int(decode_cfg.get("max_new_tokens", max_len))
-    min_new_tokens_raw = decode_cfg.get("min_new_tokens", 1)
-    try:
-        min_new_tokens = max(0, int(min_new_tokens_raw))
-    except (TypeError, ValueError):
-        min_new_tokens = 1
-    debug_generation_raw = decode_cfg.get(
-        "debug_generation",
-        decode_cfg.get("debug_token_ids", decode_cfg.get("debug", False)),
-    )
-    if isinstance(debug_generation_raw, str):
-        debug_generation = debug_generation_raw.lower() not in {"false", "0", "no"}
-    else:
-        debug_generation = bool(debug_generation_raw)
+    (
+        max_new_tokens,
+        min_new_tokens,
+        debug_generation,
+        extra_generation_kwargs,
+    ) = _prepare_generation_params(config, max_len)
 
     preview_cfg = config.get("preview") or {}
     preview_limit_raw = preview_cfg.get("limit", config.get("preview_samples", 0))
@@ -575,6 +632,7 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                     min_new_tokens,
                     return_raw=True,
                     debug_generation=debug_generation,
+                    generation_params=extra_generation_kwargs,
                 )
             else:
                 preds, refs, task_tags = _generate_predictions(
@@ -586,6 +644,7 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                     min_new_tokens,
                     return_raw=False,
                     debug_generation=debug_generation,
+                    generation_params=extra_generation_kwargs,
                 )
                 raw_preds = preds
                 token_ids = [[] for _ in preds]

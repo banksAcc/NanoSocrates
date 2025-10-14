@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from typing import Iterable, List, Sequence, Tuple
+from typing import Callable, Iterable, List, Sequence, Tuple
+
+import torch
+from torchmetrics import MetricCollection
+from torchmetrics.metric import Metric
+from torchmetrics.text.rouge import ROUGEScore
 
 from src.data.serialization import parse_rdf
 
@@ -24,6 +29,55 @@ def _ngram_counts(tokens: Sequence[str], n: int) -> Counter:
     if n <= 0:
         return Counter()
     return Counter(tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1))
+
+
+# ---------------------------------------------------------------------------
+# Torchmetrics helpers
+# ---------------------------------------------------------------------------
+
+
+class _PairwiseMetric(Metric):
+    """Torchmetrics wrapper that aggregates predictions before computing."""
+
+    is_differentiable = False
+    full_state_update = True
+
+    def __init__(self, fn: Callable[[Sequence[str], Sequence[str]], float]):
+        super().__init__(compute_on_cpu=True)
+        self._fn = fn
+        self.add_state("predictions", default=[], dist_reduce_fx=None)
+        self.add_state("references", default=[], dist_reduce_fx=None)
+
+    def update(self, predictions: Sequence[str], references: Sequence[str]) -> None:  # type: ignore[override]
+        preds = ["" if p is None else str(p) for p in predictions]
+        refs = ["" if r is None else str(r) for r in references]
+        if len(preds) != len(refs):
+            raise ValueError("predictions e references devono avere la stessa lunghezza")
+        self.predictions.extend(preds)
+        self.references.extend(refs)
+
+    def compute(self) -> torch.Tensor:  # type: ignore[override]
+        value = float(self._fn(self.predictions, self.references)) if self.predictions else 0.0
+        return torch.tensor(value, dtype=torch.float32)
+
+
+class RougeLMetric(ROUGEScore):
+    """Specialised ROUGE metric that returns the F-measure in percentage."""
+
+    def __init__(self) -> None:
+        super().__init__(rouge_keys=("rougeL",), use_stemmer=False)
+
+    def compute(self) -> torch.Tensor:  # type: ignore[override]
+        scores = super().compute()
+        if isinstance(scores, dict):
+            value = scores.get("rougeL_fmeasure")
+        else:
+            value = scores
+        if value is None:
+            return torch.tensor(0.0, dtype=torch.float32)
+        if not torch.is_tensor(value):
+            value = torch.tensor(float(value), dtype=torch.float32)
+        return value * 100
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +255,15 @@ def meteor_score(predictions: Sequence[str], references: Sequence[str]) -> float
     return float(sum(scores) / len(scores) * 100)
 
 
+_TEXT_GENERATION_METRICS = MetricCollection(
+    {
+        "bleu": _PairwiseMetric(corpus_bleu),
+        "rouge_l": RougeLMetric(),
+        "meteor": _PairwiseMetric(meteor_score),
+    }
+)
+
+
 # ---------------------------------------------------------------------------
 # Triple RDF e accuracy
 # ---------------------------------------------------------------------------
@@ -269,11 +332,10 @@ def compute_text_generation_metrics(
     predictions: Sequence[str], references: Sequence[str]
 ) -> dict:
     """Return a dictionary with BLEU, ROUGE-L and METEOR scores."""
-    return {
-        "bleu": corpus_bleu(predictions, references),
-        "rouge_l": rouge_l_score(predictions, references),
-        "meteor": meteor_score(predictions, references),
-    }
+    metrics = _TEXT_GENERATION_METRICS.clone()
+    metrics.update(predictions, references)
+    computed = metrics.compute()
+    return {name: float(value.cpu().item()) for name, value in computed.items()}
 
 
 def compute_triple_metrics(

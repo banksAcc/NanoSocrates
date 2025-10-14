@@ -9,5 +9,6 @@ torch>=2.2
 tokenizers>=0.15
 numpy>=1.26
 wandb
+torchmetrics
 
 
