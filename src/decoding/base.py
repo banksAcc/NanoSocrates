@@ -16,7 +16,7 @@ Queste utility sono usate sia dagli script (`src/run.py` e
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 
 import logging
 
@@ -56,6 +56,7 @@ def greedy_decode(
     *,
     min_new_tokens: int = 1,
     debug: bool = False,
+    forbidden_token_ids: Optional[Sequence[int]] = None,
 ):
     """Esegue il decoding greedy restituendo gli ID generati.
 
@@ -75,14 +76,29 @@ def greedy_decode(
     start_id = _select_start_token_id(tok, eot_id)
     y = torch.tensor([[start_id]], dtype=torch.long, device=device)
 
+    extra_mask_ids: tuple[int, ...] = tuple(
+        int(token_id)
+        for token_id in (forbidden_token_ids or [])
+        if token_id is not None
+    )
+
     for step in range(max_new_tokens):
         out = model(inp, att, decoder_input_ids=y)
         logits_step = out["logits"][:, -1, :]
         generated_len = y.size(1) - 1
+        mask_ids = []
         if eot_id is not None and generated_len < int(max(0, min_new_tokens)):
+            mask_ids.append(int(eot_id))
+        if start_id is not None and int(start_id) != int(eot_id or -1):
+            mask_ids.append(int(start_id))
+        if extra_mask_ids:
+            mask_ids.extend(extra_mask_ids)
+        if mask_ids:
             logits_step = logits_step.clone()
             min_val = torch.finfo(logits_step.dtype).min
-            logits_step[..., int(eot_id)] = min_val
+            for token_id in {int(tok_id) for tok_id in mask_ids}:
+                if 0 <= token_id < logits_step.size(-1):
+                    logits_step[..., token_id] = min_val
         next_id = logits_step.argmax(-1, keepdim=True)
         y = torch.cat([y, next_id], dim=1)
         token_id = int(next_id.item())
@@ -103,12 +119,19 @@ def decode_to_text(model, tok, input_text: str, **kwargs) -> str:
     return_ids = bool(kwargs.pop("return_ids", False))
     debug = bool(kwargs.pop("debug", False))
     min_new_tokens = int(kwargs.pop("min_new_tokens", 1))
+    forbidden_token_ids = kwargs.pop("forbidden_token_ids", None)
+    extra_mask_ids: tuple[int, ...] = tuple(
+        int(token_id)
+        for token_id in (forbidden_token_ids or [])
+        if token_id is not None
+    )
     ids = greedy_decode(
         model,
         tok,
         input_text,
         min_new_tokens=min_new_tokens,
         debug=debug,
+        forbidden_token_ids=extra_mask_ids,
         **kwargs,
     )
     start_id = _select_start_token_id(tok)

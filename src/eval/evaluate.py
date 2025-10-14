@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections import Counter, defaultdict
 from functools import partial
@@ -19,6 +20,21 @@ from src.tokenizer.tokenizer_io import TokWrapper
 from src.training.dataloaders import JsonlSeq2Seq, pad_collate
 
 LOGGER = logging.getLogger(__name__)
+
+
+STRUCTURAL_DECODE_TOKENS: tuple[str, ...] = (
+    "<SUBJ>",
+    "<PRED>",
+    "<OBJ>",
+    "<OBJ_LIST>",
+    "<Text2RDF>",
+    "<RDF2Text>",
+    "<CONTINUERDF>",
+    "<MASK>",
+)
+
+TEXTUAL_OUTPUT_TASKS: frozenset[str] = frozenset({"rdf2text", "rdfcomp1", "rdfcomp2"})
+
 
 def _select_device(want: Optional[str]) -> str:
     """Sceglie "cuda" solo se disponibile, altrimenti ripiega su CPU."""
@@ -164,10 +180,15 @@ def _generate_predictions(
     dataset: JsonlSeq2Seq,
     device: str,
     max_new_tokens: int,
+    min_new_tokens: int = 0,
     *,
     normalise: bool = True,
     return_raw: bool = False,
-) -> tuple[List[str], List[str], List[str]] | tuple[List[str], List[str], List[str], List[str], List[str]]:
+    debug_generation: bool = False,
+) -> (
+    tuple[List[str], List[str], List[str]]
+    | tuple[List[str], List[str], List[str], List[str], List[str], List[List[int]]]
+):
     """Genera predizioni greedy restituendo anche i task di provenienza."""
 
     predictions: List[str] = []
@@ -176,6 +197,22 @@ def _generate_predictions(
     raw_references: List[str] = []
     tasks: List[str] = []
     token_sequences: List[List[int]] = []
+
+    pad_token_id = getattr(tokenizer, "pad_id", None)
+    structural_token_ids: Tuple[int, ...] = tuple(
+        int(token_id)
+        for token_id in (
+            tokenizer.token_to_id(token) for token in STRUCTURAL_DECODE_TOKENS
+        )
+        if token_id is not None
+    )
+    base_forbidden_ids: Tuple[int, ...]
+    if pad_token_id is None:
+        base_forbidden_ids = structural_token_ids
+    else:
+        base_forbidden_ids = tuple(
+            dict.fromkeys(structural_token_ids + (int(pad_token_id),))
+        )
 
     for ex in dataset.items:
         source: str = ""
@@ -212,6 +249,9 @@ def _generate_predictions(
         if not source:
             continue
 
+        task_slug = str(task_name or "").lower()
+        forbidden_ids = base_forbidden_ids if task_slug in TEXTUAL_OUTPUT_TASKS else ()
+
         pred, token_ids = decode_to_text(
             model,
             tokenizer,
@@ -221,9 +261,11 @@ def _generate_predictions(
             min_new_tokens=min_new_tokens,
             debug=debug_generation,
             return_ids=True,
+            forbidden_token_ids=forbidden_ids,
         )
         raw_predictions.append(pred)
         raw_references.append(target)
+        token_sequences.append(list(token_ids))
         if normalise:
             predictions.append(_normalise_text(pred))
             references.append(_normalise_text(target))
@@ -232,12 +274,24 @@ def _generate_predictions(
             references.append(target)
         tasks.append(str(task_name or "unknown"))
     if return_raw:
-        return predictions, references, tasks, raw_predictions, raw_references
+        return (
+            predictions,
+            references,
+            tasks,
+            raw_predictions,
+            raw_references,
+            token_sequences,
+        )
     return predictions, references, tasks
 
 
 def _extract_example_fields(example) -> Tuple[str, str, str, Optional[str]]:
     """Return raw input/target/task/film strings from a dataset item."""
+
+    def _normalise_optional_str(value):
+        if value is None:
+            return None
+        return str(value)
 
     if isinstance(example, Mapping):
         source = str(
@@ -254,7 +308,7 @@ def _extract_example_fields(example) -> Tuple[str, str, str, Optional[str]]:
             or ""
         )
         task_name = str(example.get("task") or example.get("task_name") or "")
-        film = example.get("film")
+        film = _normalise_optional_str(example.get("film"))
     else:
         source = str(
             getattr(example, "input_text", None)
@@ -268,7 +322,7 @@ def _extract_example_fields(example) -> Tuple[str, str, str, Optional[str]]:
             or ""
         )
         task_name = str(getattr(example, "task", "") or "")
-        film = getattr(example, "film", None)
+        film = _normalise_optional_str(getattr(example, "film", None))
     return source, target, task_name, film
 
 
@@ -278,6 +332,7 @@ def _build_preview_records(
     references: Sequence[str],
     raw_predictions: Sequence[str],
     tasks: Sequence[str],
+    token_ids: Sequence[Sequence[int]],
     *,
     limit: int,
     per_task: bool = True,
@@ -291,8 +346,8 @@ def _build_preview_records(
     counters: Counter[str] = Counter()
     total_added = 0
 
-    for idx, (pred, ref, raw_pred, task_tag) in enumerate(
-        zip(predictions, references, raw_predictions, tasks)
+    for idx, (pred, ref, raw_pred, task_tag, token_seq) in enumerate(
+        zip(predictions, references, raw_predictions, tasks, token_ids)
     ):
         bucket = str(task_tag or "unknown")
         if per_task:
@@ -302,7 +357,8 @@ def _build_preview_records(
             if total_added >= limit:
                 break
         source, target, dataset_task, film = _extract_example_fields(dataset.items[idx])
-        record = {
+        example = dataset.items[idx]
+        record: Dict[str, object] = {
             "index": idx,
             "task": bucket,
             "dataset_task": dataset_task,
@@ -313,7 +369,21 @@ def _build_preview_records(
             "prediction_normalised": pred,
             "target_normalised": ref,
             "exact_match": bool(pred == ref),
+            "input_tokens": len(getattr(example, "input_ids", []) or []),
+            "target_tokens": len(getattr(example, "label_ids", []) or []),
+            "prediction_chars": len(raw_pred.strip()),
+            "prediction_tokens": len(raw_pred.split()),
+            "prediction_token_ids": list(token_seq),
         }
+        warnings: List[str] = []
+        if not raw_pred.strip():
+            warnings.append("empty_prediction")
+        if len(getattr(example, "input_ids", [])) >= getattr(dataset, "max_len", 0) > 0:
+            warnings.append("input_truncated")
+        if len(getattr(example, "label_ids", [])) >= getattr(dataset, "max_len", 0) > 0:
+            warnings.append("target_truncated")
+        if warnings:
+            record["warnings"] = warnings
         previews[bucket].append(record)
         counters[bucket] += 1
         total_added += 1
@@ -440,24 +510,6 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
     )
     preview_output_dir = Path(preview_output_dir_raw) if preview_output_dir_raw else None
 
-    preview_cfg = config.get("preview") or {}
-    preview_limit_raw = preview_cfg.get("limit", config.get("preview_samples", 0))
-    try:
-        preview_limit = int(preview_limit_raw)
-    except (TypeError, ValueError):
-        preview_limit = 0
-    per_task = preview_cfg.get("per_task", True)
-    if isinstance(per_task, str):
-        per_task = per_task.lower() not in {"false", "0", "no"}
-    else:
-        per_task = bool(per_task)
-    preview_output_dir_raw = (
-        preview_cfg.get("output_dir")
-        or preview_cfg.get("dir")
-        or config.get("preview_output_dir")
-    )
-    preview_output_dir = Path(preview_output_dir_raw) if preview_output_dir_raw else None
-
     batch_size = int(config.get("batch_size", 8))
     num_workers = int(config.get("num_workers", 0))
     pin_memory = device == "cuda"
@@ -506,13 +558,22 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
             loss = _compute_loss(model, dataloader, device)
             want_preview = preview_limit > 0
             if want_preview:
-                preds, refs, task_tags, raw_preds, _ = _generate_predictions(
+                (
+                    preds,
+                    refs,
+                    task_tags,
+                    raw_preds,
+                    _raw_refs,
+                    token_ids,
+                ) = _generate_predictions(
                     model,
                     tokenizer,
                     dataset,
                     device,
                     max_new_tokens,
+                    min_new_tokens,
                     return_raw=True,
+                    debug_generation=debug_generation,
                 )
             else:
                 preds, refs, task_tags = _generate_predictions(
@@ -521,9 +582,12 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                     dataset,
                     device,
                     max_new_tokens,
+                    min_new_tokens,
                     return_raw=False,
+                    debug_generation=debug_generation,
                 )
                 raw_preds = preds
+                token_ids = [[] for _ in preds]
             grouped = _group_by_task(preds, refs, task_tags)
             metrics_payload: Dict[str, object] = {}
             for t_name, bucket in grouped.items():
@@ -544,8 +608,65 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                     refs,
                     raw_preds,
                     task_tags,
+                    token_ids,
                     limit=preview_limit,
                     per_task=per_task,
+                )
+
+            input_token_lengths = [len(example.input_ids) for example in dataset.items]
+            target_token_lengths = [len(example.label_ids) for example in dataset.items]
+            prediction_char_lengths = [len(pred.strip()) for pred in raw_preds]
+            prediction_token_lengths = [len(pred.split()) for pred in raw_preds]
+
+            diagnostics: Dict[str, object] = {
+                "input_tokens": _summarise_lengths(input_token_lengths),
+                "target_tokens": _summarise_lengths(target_token_lengths),
+                "prediction_chars": _summarise_lengths(prediction_char_lengths),
+                "prediction_tokens": _summarise_lengths(prediction_token_lengths),
+                "inputs_truncated": int(
+                    sum(1 for length in input_token_lengths if length >= dataset.max_len)
+                ),
+                "targets_truncated": int(
+                    sum(1 for length in target_token_lengths if length >= dataset.max_len)
+                ),
+            }
+
+            try:
+                unique_inputs = len({example.input_text for example in dataset.items})
+            except TypeError:
+                unique_inputs = len(dataset.items)
+            diagnostics["unique_inputs"] = int(unique_inputs)
+            diagnostics["duplicate_inputs"] = int(len(dataset) - unique_inputs)
+
+            if dataset.items:
+                longest_input_idx = max(
+                    range(len(dataset.items)),
+                    key=lambda i: len(dataset.items[i].input_ids),
+                )
+                longest_example = dataset.items[longest_input_idx]
+                diagnostics["longest_input_index"] = int(longest_input_idx)
+                diagnostics["longest_input_tokens"] = int(len(longest_example.input_ids))
+                diagnostics["longest_input_chars"] = int(len(longest_example.input_text))
+                diagnostics["longest_input_film"] = (
+                    str(longest_example.film)
+                    if getattr(longest_example, "film", None) is not None
+                    else None
+                )
+
+            empty_predictions = diagnostics["prediction_chars"]["zeros"]
+            total_predictions = diagnostics["prediction_chars"]["count"]
+            if total_predictions:
+                diagnostics["empty_prediction_ratio"] = float(
+                    empty_predictions / total_predictions
+                )
+            if empty_predictions:
+                LOGGER.warning(
+                    "Lo split %s del task %s ha prodotto %d predizioni vuote su %d esempi (%.1f%%).",
+                    split,
+                    task_name,
+                    empty_predictions,
+                    total_predictions,
+                    100.0 * empty_predictions / total_predictions if total_predictions else 0.0,
                 )
 
             split_payload["tasks"][task_name] = {
