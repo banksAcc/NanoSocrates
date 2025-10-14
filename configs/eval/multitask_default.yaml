@@ -30,4 +30,9 @@ tasks:
     test: "data/processed/rdfcomp2.test.jsonl"
 
 wandb:
-  mode: "online"
+  mode: "disabled"
+
+preview:
+  limit: 5          # massimo numero di esempi mostrati per ciascun task
+  per_task: true    # se false applica il limite sull'intero dataset
+  output_dir: "reports/previews"  # (facoltativo) salva i record su disco

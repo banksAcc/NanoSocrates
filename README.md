@@ -280,34 +280,6 @@ che reindirizza automaticamente verso il subcomando `evaluate` e sfrutta
 Gli alias predefiniti includono anche `mix` (sinonimo di `multitask_default`) e
 `baseline` per il vecchio encoder–decoder sinusoidale.
 
-#### Anteprima delle predizioni
-
-Per diagnosticare errori di valutazione è possibile chiedere a `evaluate`
-di salvare un campione di input/target/predizione. Aggiungi la sezione
-`preview` nel config (o usa `--override preview.limit=5`) per ottenere un
-riepilogo per task nel report JSON e, opzionalmente, dei file JSONL con
-le predizioni grezze:
-
-```yaml
-preview:
-  limit: 5          # massimo numero di esempi mostrati per ciascun task
-  per_task: true    # se false applica il limite sull'intero dataset
-  output_dir: "reports/previews"  # (facoltativo) salva i record su disco
-```
-
-Nel report, la chiave `preview` contiene l'elenco dei campioni per task,
-includendo input originale, target atteso, output normalizzato e un flag
-`exact_match`. I record ora riportano anche il numero di token per input,
-target e predizione, oltre a eventuali `warnings` (es. `empty_prediction`
-o `input_truncated`).
-
-Quando `output_dir` è impostato, ogni combinazione `split`/`task` produce
-un file `*.jsonl` facilmente consultabile o caricabile in spreadsheet
-per analisi mirate. Inoltre la sezione `diagnostics` del report riepiloga
-le lunghezze medie/min/max degli input, quante predizioni risultano
-vuote e quali esempi saturano il `max_len`, facilitando l'individuazione
-di dataset problematici.
-
 ### 8.2 Inference manuale
 
 Per testare rapidamente il modello su un input specifico puoi usare il

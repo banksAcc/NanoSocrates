@@ -93,33 +93,6 @@ def _token_to_id(tokenizer: Any, token: str) -> int | None:
     return None
 
 
-def _ensure_special_tokens(tokenizer: Any) -> None:
-    """Ensure newly introduced special tokens exist in the loaded tokenizer."""
-
-    missing = [tok for tok in REQUIRED_SPECIAL_TOKENS if _token_to_id(tokenizer, tok) is None]
-    if not missing:
-        return
-
-    added = 0
-    add_special = getattr(tokenizer, "add_special_tokens", None)
-    if callable(add_special):
-        added = add_special(list(missing))
-    else:
-        add_tokens = getattr(tokenizer, "add_tokens", None)
-        if callable(add_tokens):
-            added = add_tokens(list(missing))
-
-    if added:
-        LOGGER.debug("Added runtime special tokens: %s", missing)
-
-    for token in missing:
-        if _token_to_id(tokenizer, token) is None:
-            raise ValueError(
-                "Tokenizer privo del token speciale richiesto '%s'. Aggiorna il vocabolario o rigenera il BPE."
-                % token
-            )
-
-
 @dataclass
 class Seq2SeqExample:
     """Represent a pre-tokenised sequence-to-sequence example."""
@@ -315,8 +288,6 @@ def _iter_examples(
         sot_id = int(fallback)
     prefix_len = 1 if sot_id is not None else 0
     suffix_len = 1 if eot_id is not None else 0
-    _ensure_special_tokens(tokenizer)
-
     for record in read_jsonl(path):
         source = str(record.get("input") or record.get("source") or record.get("text") or "")
         source = _compact_rdf_input(source)

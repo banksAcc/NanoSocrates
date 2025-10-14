@@ -356,33 +356,14 @@ def cmd_predict(args: argparse.Namespace) -> None:
     )
 
     prepared_input = _prepare_predict_input(args.input, args.task)
-    prediction, token_ids = decode_to_text(
+    output = decode_to_text(
         model,
         tokenizer,
         prepared_input,
         max_new_tokens=args.max_new_tokens,
         device=device,
-        return_ids=True,
     )
-    result = {
-        "task": args.task,
-        "input": args.input,
-        "prepared_input": prepared_input,
-        "prediction": prediction,
-        "prediction_token_ids": token_ids,
-        "prediction_length_chars": len(prediction.strip()),
-        "prediction_length_tokens": len(prediction.split()),
-    }
-
-    indent = 2 if sys.stdout.isatty() else None
-    print(json.dumps(result, ensure_ascii=False, indent=indent))
-
-    if getattr(args, "output", None):
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with output_path.open("w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+    print(output)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -412,11 +393,6 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=[],
         help="Override opzionali dei parametri del modello (chiave=valore)",
-    )
-    p_predict.add_argument(
-        "--output",
-        help="File JSON su cui salvare input e predizione per ulteriori analisi",
-        default=None,
     )
 
     return parser
