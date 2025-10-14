@@ -79,10 +79,16 @@ def greedy_decode(
         out = model(inp, att, decoder_input_ids=y)
         logits_step = out["logits"][:, -1, :]
         generated_len = y.size(1) - 1
+        mask_ids = []
         if eot_id is not None and generated_len < int(max(0, min_new_tokens)):
+            mask_ids.append(int(eot_id))
+        if start_id is not None and int(start_id) != int(eot_id or -1):
+            mask_ids.append(int(start_id))
+        if mask_ids:
             logits_step = logits_step.clone()
             min_val = torch.finfo(logits_step.dtype).min
-            logits_step[..., int(eot_id)] = min_val
+            for token_id in mask_ids:
+                logits_step[..., token_id] = min_val
         next_id = logits_step.argmax(-1, keepdim=True)
         y = torch.cat([y, next_id], dim=1)
         token_id = int(next_id.item())

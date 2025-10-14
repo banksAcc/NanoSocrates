@@ -254,6 +254,11 @@ def _generate_predictions(
 def _extract_example_fields(example) -> Tuple[str, str, str, Optional[str]]:
     """Return raw input/target/task/film strings from a dataset item."""
 
+    def _normalise_optional_str(value):
+        if value is None:
+            return None
+        return str(value)
+
     if isinstance(example, Mapping):
         source = str(
             example.get("raw_input")
@@ -269,7 +274,7 @@ def _extract_example_fields(example) -> Tuple[str, str, str, Optional[str]]:
             or ""
         )
         task_name = str(example.get("task") or example.get("task_name") or "")
-        film = example.get("film")
+        film = _normalise_optional_str(example.get("film"))
     else:
         source = str(
             getattr(example, "input_text", None)
@@ -283,7 +288,7 @@ def _extract_example_fields(example) -> Tuple[str, str, str, Optional[str]]:
             or ""
         )
         task_name = str(getattr(example, "task", "") or "")
-        film = getattr(example, "film", None)
+        film = _normalise_optional_str(getattr(example, "film", None))
     return source, target, task_name, film
 
 
@@ -608,8 +613,11 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                 diagnostics["longest_input_index"] = int(longest_input_idx)
                 diagnostics["longest_input_tokens"] = int(len(longest_example.input_ids))
                 diagnostics["longest_input_chars"] = int(len(longest_example.input_text))
-                diagnostics["longest_input_film"] = longest_example.film
-
+                diagnostics["longest_input_film"] = (
+                    str(longest_example.film)
+                    if getattr(longest_example, "film", None) is not None
+                    else None
+                )
             empty_predictions = diagnostics["prediction_chars"]["zeros"]
             total_predictions = diagnostics["prediction_chars"]["count"]
             if total_predictions:
