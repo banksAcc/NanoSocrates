@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from enum import Enum
 import json
 import logging
 import math
@@ -289,6 +290,10 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     cfg = _prepare_config(args)
     run_training(cfg, overfit=True)
 
+def enum_to_str(obj):
+    if isinstance(obj, Enum):
+        return obj.name
+    return str(obj)
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
     """Entry point for the ``evaluate`` sub-command that saves metrics to disk."""
@@ -311,7 +316,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     try:
         report = evaluate_from_config(cfg)
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False)
+            json.dump(report, f, indent=2, ensure_ascii=False, default=enum_to_str)
         LOGGER.info("Report salvato in %s", output_path.resolve())
         _print_report(report)
 

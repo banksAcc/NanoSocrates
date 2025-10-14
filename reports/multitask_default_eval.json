@@ -1,0 +1,19 @@
+{
+  "checkpoint": "C:\\Users\\amile\\OneDrive - Politecnico di Bari\\Personal-Surface\\UNI\\magistrale poliba\\ESAMI\\DEEP LEARNING\\PROGETTO\\NanoSocrates\\checkpoints\\multitask_default\\best.pt",
+  "device": "cuda",
+  "splits": {
+    "val": {
+      "tasks": {
+        "text2rdf": {
+          "path": "data/processed/toy/text2rdf.val.jsonl",
+          "loss": 277.3946838378906,
+          "num_samples": 4,
+          "metrics": {
+            "text2rdf": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "samples": 4
+            }
+          },
+          "diagnostics": 
