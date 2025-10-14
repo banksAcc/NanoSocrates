@@ -91,6 +91,31 @@ def _compute_span_accuracy(
     return float(correct_spans / total_spans) if total_spans > 0 else None
 
 
+@torch.inference_mode()
+def _compute_mask_token_accuracy(
+    logits: torch.Tensor, labels: torch.Tensor, ignore_index: int
+) -> Optional[float]:
+    """Compute token-level accuracy for masked language modelling targets.
+
+    When :class:`DataCollatorForLanguageModeling` is used, the labels tensor
+    contains the original token ids for masked positions and ``ignore_index``
+    (typically ``-100``) elsewhere. This helper measures the fraction of
+    correctly predicted masked tokens without requiring explicit span
+    annotations.
+    """
+
+    mask = (labels != ignore_index) & (labels >= 0)
+    if not torch.any(mask):
+        return None
+
+    predictions = logits.argmax(dim=-1)
+    correct = (predictions == labels) & mask
+    total = mask.sum().item()
+    if total == 0:
+        return None
+    return float(correct.sum().item() / total)
+
+
 def sequence_loss_with_span_metrics(
     logits: torch.Tensor,
     labels: torch.Tensor,
@@ -116,10 +141,17 @@ def sequence_loss_with_span_metrics(
     """
     logits_for_loss, target = _align_logits_and_labels(logits, labels)
 
+    target_for_loss = target
+    ignore_index = pad_id
+    if (target == -100).any():
+        ignore_index = -100
+        if pad_id != ignore_index:
+            target_for_loss = target_for_loss.masked_fill(target_for_loss == pad_id, ignore_index)
+
     loss = F.cross_entropy(
         logits_for_loss.reshape(-1, logits_for_loss.size(-1)),
-        target.reshape(-1),
-        ignore_index=pad_id,
+        target_for_loss.reshape(-1),
+        ignore_index=ignore_index,
     )
 
     metrics: Dict[str, float] = {}
@@ -127,6 +159,8 @@ def sequence_loss_with_span_metrics(
         accuracy = _compute_span_accuracy(
             logits_for_loss, target, mask_positions, mask_lengths
         )
+        if accuracy is None and ignore_index == -100:
+            accuracy = _compute_mask_token_accuracy(logits_for_loss, target, ignore_index)
         if accuracy is not None:
             metrics["mask_accuracy"] = accuracy
 

@@ -7,10 +7,20 @@ from typing import Tuple
 RDF_OBJECT_LIST_TOKEN: str = "<OBJ_LIST>"
 RDF_LIST_SEPARATOR_TOKEN: str = "|"
 
-# Expose an immutable tuple so callers can iterate without mutating globals.
+# Central list used to ensure that all task-specific markers are available
+# regardless of the tokenizer generation used at runtime.
 REQUIRED_SPECIAL_TOKENS: Tuple[str, ...] = (
+    "<SOT>",
+    "<EOT>",
+    "<SUBJ>",
+    "<PRED>",
+    "<OBJ>",
     RDF_OBJECT_LIST_TOKEN,
     RDF_LIST_SEPARATOR_TOKEN,
+    "<RDF2Text>",
+    "<Text2RDF>",
+    "<CONTINUERDF>",
+    "<MASK>",
 )
 
 __all__ = [

@@ -8,6 +8,7 @@ pandas
 torch>=2.2
 tokenizers>=0.15
 numpy>=1.26
+transformers>=4.39
 wandb
 
 
