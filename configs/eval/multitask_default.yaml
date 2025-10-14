@@ -1,5 +1,5 @@
 model_alias: "multitask_default"
-checkpoint: "<<override-me>>"  # usa --override checkpoint=... oppure aggiorna CHECKPOINT_ALIASES
+checkpoint: "overfit.pt"  # usa --override checkpoint=... oppure aggiorna CHECKPOINT_ALIASES
 
 tokenizer_file: "data/vocab/bpe.json"
 max_len: 256
@@ -30,4 +30,4 @@ tasks:
     test: "data/processed/rdfcomp2.test.jsonl"
 
 wandb:
-  mode: "disabled"
+  mode: "online"

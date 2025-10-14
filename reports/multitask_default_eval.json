@@ -1,12 +1,12 @@
 {
-  "checkpoint": "C:\\Users\\amile\\OneDrive - Politecnico di Bari\\Personal-Surface\\UNI\\magistrale poliba\\ESAMI\\DEEP LEARNING\\PROGETTO\\NanoSocrates\\checkpoints\\baseline\\best.pt",
+  "checkpoint": "C:\\Users\\amile\\OneDrive - Politecnico di Bari\\Personal-Surface\\UNI\\magistrale poliba\\ESAMI\\DEEP LEARNING\\PROGETTO\\NanoSocrates\\checkpoints\\multitask_default\\best.pt",
   "device": "cuda",
   "splits": {
     "val": {
       "tasks": {
         "text2rdf": {
           "path": "data/processed/toy/text2rdf.val.jsonl",
-          "loss": 104.13439178466797,
+          "loss": 15.754645347595215,
           "num_samples": 4,
           "metrics": {
             "text2rdf": {
@@ -19,20 +19,20 @@
         },
         "rdf2text": {
           "path": "data/processed/toy/rdf2text.val.jsonl",
-          "loss": 106.3720703125,
+          "loss": 30.17499351501465,
           "num_samples": 4,
           "metrics": {
             "rdf2text": {
-              "bleu": 1.577326308624475e-10,
-              "rouge_l": 0.0,
-              "meteor": 0.0,
+              "bleu": 3.751811322012395e-08,
+              "rouge_l": 0.38393756294058407,
+              "meteor": 0.34435261707988984,
               "samples": 4
             }
           }
         },
         "rdfcomp1": {
           "path": "data/processed/toy/rdfcomp1.val.jsonl",
-          "loss": 91.68690490722656,
+          "loss": 33.06407165527344,
           "num_samples": 4,
           "metrics": {
             "rdfcomp1": {
@@ -43,7 +43,7 @@
         },
         "rdfcomp2": {
           "path": "data/processed/toy/rdfcomp2.val.jsonl",
-          "loss": 103.0380630493164,
+          "loss": 14.727425575256348,
           "num_samples": 4,
           "metrics": {
             "rdfcomp2": {
@@ -55,14 +55,14 @@
           }
         }
       },
-      "avg_loss": 101.30785751342773,
+      "avg_loss": 23.430284023284912,
       "num_samples": 16
     },
     "test": {
       "tasks": {
         "text2rdf": {
           "path": "data/processed/toy/text2rdf.test.jsonl",
-          "loss": 103.8475570678711,
+          "loss": 17.89853858947754,
           "num_samples": 4,
           "metrics": {
             "text2rdf": {
@@ -75,20 +75,20 @@
         },
         "rdf2text": {
           "path": "data/processed/toy/rdf2text.test.jsonl",
-          "loss": 102.5037841796875,
+          "loss": 29.4837589263916,
           "num_samples": 4,
           "metrics": {
             "rdf2text": {
-              "bleu": 1.577326308624475e-10,
-              "rouge_l": 0.0,
-              "meteor": 0.0,
+              "bleu": 3.751811322012395e-08,
+              "rouge_l": 0.35498137802607077,
+              "meteor": 0.28153153153153154,
               "samples": 4
             }
           }
         },
         "rdfcomp1": {
           "path": "data/processed/toy/rdfcomp1.test.jsonl",
-          "loss": 84.16703796386719,
+          "loss": 39.42225646972656,
           "num_samples": 4,
           "metrics": {
             "rdfcomp1": {
@@ -99,7 +99,7 @@
         },
         "rdfcomp2": {
           "path": "data/processed/toy/rdfcomp2.test.jsonl",
-          "loss": 100.80078887939453,
+          "loss": 16.12462615966797,
           "num_samples": 4,
           "metrics": {
             "rdfcomp2": {
@@ -111,7 +111,7 @@
           }
         }
       },
-      "avg_loss": 97.82979202270508,
+      "avg_loss": 25.732295036315918,
       "num_samples": 16
     }
   }
