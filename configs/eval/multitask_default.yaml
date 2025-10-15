@@ -2,14 +2,14 @@ model_alias: "multitask_default"
 checkpoint: "overfit.pt"  # usa --override checkpoint=... oppure aggiorna CHECKPOINT_ALIASES
 
 tokenizer_file: "data/vocab/bpe.json"
-max_len: 100
+max_len: 256
 batch_size: 16
 num_workers: 4
 device: "cuda"
 output_json: "reports/multitask_default_eval.json"
 
 generation_params:
-  max_new_tokens: 256
+  max_new_tokens: 100
   min_new_tokens: 1
   debug_generation: true
   use_beam_search: true
@@ -38,6 +38,6 @@ wandb:
   mode: "disabled"
 
 preview:
-  limit: 5          # massimo numero di esempi mostrati per ciascun task
-  per_task: false  # se false applica il limite sull'intero dataset
+  limit: 10          # massimo numero di esempi mostrati per ciascun task
+  per_task: true    # se false applica il limite sull'intero dataset
   output_dir: "reports/previews"  # (facoltativo) salva i record su disco
