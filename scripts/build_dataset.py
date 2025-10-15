@@ -67,6 +67,25 @@ def main() -> None:
     seed = int(cfg.get("shuffle_seed", 13))
     random.seed(seed)
 
+    dbpedia_cfg_path = cfg.get("dbpedia_config")
+    predicate_priority: List[str] = []
+    if dbpedia_cfg_path:
+        try:
+            dbpedia_cfg = load_yaml(dbpedia_cfg_path)
+            predicate_priority = list(dbpedia_cfg.get("predicates_whitelist", []))
+        except FileNotFoundError:
+            LOGGER.warning(
+                "DBpedia config not found at %s. Predicate priority will be empty.",
+                dbpedia_cfg_path,
+            )
+
+    predicate_caps_override = cfg.get("predicate_caps_override") or {}
+    predicate_caps_override = {
+        predicate: int(cap) for predicate, cap in predicate_caps_override.items()
+    }
+    predicate_object_cap = cfg.get("predicate_object_cap")
+    predicate_object_cap = int(predicate_object_cap) if predicate_object_cap is not None else None
+
     # Carica stream grezzi dalle sorgenti DBpedia/Wikipedia.
     triples_stream = list(read_jsonl(args.dbp))
     texts_stream = list(read_jsonl(args.wiki))
@@ -79,6 +98,9 @@ def main() -> None:
             texts_stream,
             min_triples=int(cfg.get("min_triples_per_film", 3)),
             allowed_languages=cfg.get("allowed_languages"),
+            predicate_object_cap=predicate_object_cap,
+            predicate_caps_override=predicate_caps_override,
+            predicate_priority=predicate_priority,
         )
     )
     LOGGER.info("Paired examples (films): %d", len(pairs))
