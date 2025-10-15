@@ -33,6 +33,7 @@ nanosocrates/
 │  ├─ fetch_wikipedia.py         # scarica abstract intro (richiede PYTHONPATH=src)
 │  ├─ predict_example.py         # inference minimale da riga di comando
 │  ├─ sanity_overfit.py          # scorciatoia per l'overfit di un batch
+│  ├─ inspect_mlm_batch.py       # stampa e valida un batch per il masked LM
 │  └─ train_tokenizer.py         # addestra il tokenizer BPE
 └─ src/
    ├─ run.py                     # entrypoint unificato (train/overfit/evaluate/predict)
@@ -146,6 +147,38 @@ pip install -r requirements.txt
        checkpoint=checkpoints/multitask_default/best.pt \
        wandb.mode=online wandb.project=nanosocrates-demo --output reports/multitask_default_eval.json
    ```
+
+### 2.6 Debug — ispeziona un batch MLM
+
+Lo script `scripts/inspect_mlm_batch.py` consente di verificare rapidamente che il
+tokenizer e il `DataCollatorForLanguageModeling` generino batch coerenti prima di
+avviare esperimenti di training. Per usarlo:
+
+1. Assicurati di avere le dipendenze opzionali installate (almeno `transformers`,
+   `datasets` e `torch`).
+2. Esegui lo script come modulo in modo che il pacchetto `src/` sia risolto
+   automaticamente nel `PYTHONPATH`:
+
+   ```bash
+   python -m scripts.inspect_mlm_batch --tokenizer data/vocab/bpe.json \
+       --text "Ciao mondo" --batch-size 2 --max-length 64
+   ```
+
+   Parametri utili:
+
+   - `--tokenizer`: nome Hugging Face o percorso a una directory/file locale del
+     tokenizer.
+   - `--text`: puoi specificarlo più volte per aggiungere esempi inline.
+   - `--text-file`: file di testo (uno per riga) da cui leggere ulteriori esempi.
+   - `--batch-size`, `--max-length`, `--mlm-probability`: replicano i campi del
+     dataloader e del collator.
+
+3. L'output riporta gli ID dei token speciali e stampa `input_ids`, `labels` e
+   `attention_mask`. Lo script solleva un errore se:
+
+   - due token speciali condividono lo stesso ID;
+   - le label sul padding non sono a `-100`;
+   - la `attention_mask` non è 0/1 o non è allineata al padding.
 
 ---
 
