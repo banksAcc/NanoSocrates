@@ -524,6 +524,33 @@ class PadCollator:
         return pad_collate(batch, pad_id=self.pad_id, label_pad_id=self.label_pad_id)
 
 
+class StaticBatchLoader:
+    """Yield a pre-collated batch multiple times without touching the dataset.
+
+    The overfit sanity check only needs to repeatedly optimise on the same
+    examples. Building a full :class:`~torch.utils.data.DataLoader` (with the
+    sampler, worker initialisation and collation) for every epoch introduces a
+    measurable overhead, especially when the dataset has already been sliced
+    down to a handful of samples.  This lightweight loader simply materialises a
+    single batch once and then replays it ``repeats`` times, exposing the same
+    interface as a regular DataLoader for the parts of the training loop that
+    rely on ``__len__`` and ``__iter__``.
+    """
+
+    def __init__(self, batch: Dict[str, torch.Tensor], *, repeats: int = 1) -> None:
+        if not isinstance(batch, dict):  # pragma: no cover - defensive
+            raise TypeError("StaticBatchLoader richiede un batch dict-like")
+        self._batch = batch
+        self._repeats = max(1, int(repeats))
+
+    def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
+        for _ in range(self._repeats):
+            yield self._batch
+
+    def __len__(self) -> int:
+        return self._repeats
+
+
 def create_multitask_dataloader(
     dataset: MultiTaskDataset,
     *,
@@ -563,3 +590,27 @@ def create_multitask_dataloader(
         collate_fn=collate,
         num_workers=num_workers,
     )
+
+
+def materialise_single_batch(
+    dataset: MultiTaskDataset,
+    *,
+    tokenizer: Any,
+    batch_size: int,
+) -> Dict[str, torch.Tensor]:
+    """Return a single collated batch from *dataset*.
+
+    The function draws the first ``batch_size`` elements (or fewer if the
+    dataset is smaller), applies the standard padding collator and returns the
+    resulting tensors.  It is primarily used by the overfit command to cache the
+    batch once and reuse it across epochs.
+    """
+
+    if len(dataset) == 0:
+        raise ValueError("Dataset vuoto: impossibile materializzare un batch")
+
+    pad_id = _get_pad_id(tokenizer)
+    collate = PadCollator(pad_id=pad_id)
+    take = min(batch_size, len(dataset)) or 1
+    examples = [dataset[idx] for idx in range(take)]
+    return collate(examples)

@@ -15,7 +15,9 @@ if str(ROOT) not in sys.path:
 from src.training.dataloaders import (
     MultiTaskDataset,
     Seq2SeqExample,
+    StaticBatchLoader,
     create_multitask_dataloader,
+    materialise_single_batch,
 )
 
 
@@ -56,3 +58,21 @@ def test_create_multitask_dataloader_disables_drop_last_for_small_dataset(caplog
     assert batch["input_ids"].shape[0] == 8
     # And a warning should explain the drop_last adjustment so users understand the log noise.
     assert any("disattivo drop_last" in record.getMessage() for record in caplog.records)
+
+
+def test_materialise_single_batch_and_static_loader(toy_dataset: MultiTaskDataset) -> None:
+    """The overfit helpers must cache a consistent batch without reloading data."""
+
+    batch = materialise_single_batch(
+        toy_dataset,
+        tokenizer=_DummyTokenizer(),
+        batch_size=2,
+    )
+    assert batch["input_ids"].shape[0] == 2
+
+    loader = StaticBatchLoader(batch, repeats=3)
+    assert len(loader) == 3
+
+    collected = list(loader)
+    # Every iteration should yield the very same batch object, avoiding extra copies.
+    assert all(example is batch for example in collected)
