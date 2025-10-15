@@ -538,11 +538,21 @@ def create_multitask_dataloader(
     collate = PadCollator(pad_id=pad_id)
 
     if shuffle:
+        drop_last = True
+        dataset_size = len(dataset)
+        if dataset_size < batch_size:
+            LOGGER.warning(
+                "Il dataset contiene %d esempi ma batch_size=%d: disattivo drop_last per evitare epoche vuote.",
+                dataset_size,
+                batch_size,
+            )
+            drop_last = False
+
         sampler = MultiTaskSampler(
             dataset,
             batch_size=batch_size,
             ratios=ratios or dataset.task_fractions(),
-            drop_last=True,
+            drop_last=drop_last,
         )
         return DataLoader(dataset, batch_sampler=sampler, collate_fn=collate, num_workers=num_workers)
 

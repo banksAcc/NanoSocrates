@@ -30,7 +30,7 @@ def sequence_loss_with_accuracy(
     pad_id: int,
     compute_metrics: bool = False,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """Compute cross-entropy loss and optional exact-match accuracy."""
+    """Compute cross-entropy loss and optional exact-match rate."""
 
     logits_for_loss, target = _align_logits_and_labels(logits, labels)
 
@@ -55,6 +55,6 @@ def sequence_loss_with_accuracy(
             if valid_mask.any():
                 comparison = (predictions == target) | ~valid_mask
                 per_example = comparison.all(dim=1)
-                metrics["accuracy"] = float(per_example.float().mean().item())
+                metrics["exact_match"] = float(per_example.float().mean().item())
 
     return loss, metrics
