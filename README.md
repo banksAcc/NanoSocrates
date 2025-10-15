@@ -216,6 +216,30 @@ avviare esperimenti di training. Per usarlo:
    - le label sul padding non sono a `-100`;
    - la `attention_mask` non è 0/1 o non è allineata al padding.
 
+### 2.7 Strumenti — audit dataset
+
+`scripts/data_audit.py` fornisce una panoramica rapida delle distribuzioni nelle
+triple e nelle sequenze dei task JSONL. Esegue automaticamente il parsing dei
+`pairs.*.jsonl` (anche compressi) tramite `src.utils.io.read_jsonl` e riporta:
+
+- top-20 predicati, oggetti ed entità soggetto;
+- statistiche min/avg/max sulle lunghezze whitespace-token di `input` e `target`
+  per ciascun file di task;
+- percentuale di esempi che superano la soglia impostata con `--max-len`.
+
+Esempio di utilizzo:
+
+```bash
+python -m scripts.data_audit --pairs data/interim --tasks-dir data/processed --max-len 256
+```
+
+Argomenti principali:
+
+- `--pairs`: directory, file singolo o glob dei `pairs.*.jsonl` da analizzare;
+- `--tasks-dir`: directory che contiene i JSONL dei task (opzionale);
+- `--max-len`: soglia di lunghezza (in token separati da spazi) oltre la quale
+  viene calcolata la percentuale di esempi fuori limite (default: 512).
+
 ---
 
 ## 3) Configurazione (YAML)
