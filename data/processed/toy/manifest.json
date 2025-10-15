@@ -1,9 +1,19 @@
 {
-  "total_films": 10,
+  "total_films": 20,
   "per_split": {
     "train": [
       "dbr:America_Brown_(film)",
-      "dbr:Casino_Royale_(1967_film)"
+      "dbr:Caliber_9",
+      "dbr:Call_Me_Madam_(film)",
+      "dbr:Call_of_the_Wild_(1935_film)",
+      "dbr:Candyman:_Farewell_to_the_Flesh",
+      "dbr:Carol,_Carl,_Whoopi_and_Robin",
+      "dbr:Carson_City_Cyclone",
+      "dbr:Casino_Royale_(1967_film)",
+      "dbr:Cassadaga_(film)",
+      "dbr:Prem_Prem_Paglami",
+      "dbr:Prem_Sanyas",
+      "dbr:Prepotenti_più_di_prima"
     ],
     "val": [
       "dbr:Be_Vaghte_Talagh",
@@ -20,22 +30,22 @@
   },
   "tasks": {
     "text2rdf": {
-      "train": 2,
+      "train": 12,
       "val": 4,
       "test": 4
     },
     "rdf2text": {
-      "train": 2,
+      "train": 12,
       "val": 4,
       "test": 4
     },
     "rdfcomp1": {
-      "train": 2,
+      "train": 12,
       "val": 4,
       "test": 4
     },
     "rdfcomp2": {
-      "train": 2,
+      "train": 12,
       "val": 4,
       "test": 4
     }

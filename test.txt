@@ -5,8 +5,10 @@ python -m scripts.build_toy_subset --pairs data/interim/pairs.all.jsonl --splits
 
  python -m src.run overfit  --cfg configs/train/multitask_default.yaml --toy --steps 25 --print-batch --print-batch-limit 2
 
+python -m src.run overfit --cfg configs/train/multitask_default.yaml --print-batch --print-batch-limit 3
 
- PS C:\Users\amile\OneDrive - Politecnico di Bari\Personal-Surface\UNI\magistrale poliba\ESAMI\DEEP LEARNING\PROGETTO\NanoSocrates> python -m scripts.data_audit --pairs data/interim --tasks-dir data/processed --max-len 256
+
+PS C:\Users\amile\OneDrive - Politecnico di Bari\Personal-Surface\UNI\magistrale poliba\ESAMI\DEEP LEARNING\PROGETTO\NanoSocrates> python -m scripts.data_audit --pairs data/interim --tasks-dir data/processed --max-len 256
 [21:02:07] INFO - Risolti 4 file di coppie
 [21:02:07] INFO - Analisi file coppie: data\interim\pairs.all.jsonl
 [21:02:07] INFO - Analisi file coppie: data\interim\pairs.test.jsonl
