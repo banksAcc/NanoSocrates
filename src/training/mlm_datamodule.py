@@ -7,7 +7,7 @@ from typing import List, Optional, Sequence
 from torch.utils.data import DataLoader, Dataset
 from transformers import DataCollatorForLanguageModeling, PreTrainedTokenizerBase
 
-from src.utils.special_tokens import REQUIRED_SPECIAL_TOKENS
+from src.utils.special_tokens import ensure_required_special_tokens
 
 
 class MaskedTextDataset(Dataset):
@@ -73,10 +73,7 @@ class MLMDataModule:
         self.val_dataset: Optional[MaskedTextDataset] = None
 
     def _ensure_special_tokens(self) -> None:
-        vocab = self.tokenizer.get_vocab()
-        additional_tokens = [tok for tok in REQUIRED_SPECIAL_TOKENS if tok not in vocab]
-        if additional_tokens:
-            self.tokenizer.add_special_tokens({"additional_special_tokens": additional_tokens})
+        ensure_required_special_tokens(self.tokenizer)
 
     def setup(self) -> None:
         """Initialise datasets and the masking collator."""
