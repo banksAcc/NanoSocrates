@@ -144,7 +144,10 @@ def decode_to_text(model, tok, input_text: str, **kwargs) -> str:
     start_id = _select_start_token_id(tok)
     if ids and ids[0] == start_id:
         ids = ids[1:]
-    text = tok.tk.decode(ids)
+    # Keep special tokens in the decoded string so that structural markers
+    # (e.g., <SUBJ>, <PRED>, <OBJ>, <EOT>) are preserved for non-textual tasks.
+    # Textual tasks explicitly forbid structural tokens during decoding.
+    text = tok.tk.decode(ids, skip_special_tokens=False)
     if debug:
         LOGGER.debug("[decode] decoded text='%s'", text)
     if return_ids:

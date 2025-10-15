@@ -25,20 +25,20 @@ use_rope: false
 use_mla: false
 interleave_ratio: 0.0
 architecture: "t5"
-d_model: 384
-nhead: 6
-enc_layers: 3
-dec_layers: 3
+d_model: 256
+nhead: 4
+enc_layers: 2
+dec_layers: 2
 ff_dim: 1536
 dropout: 0.1
 relative_attention_num_buckets: 32
 relative_attention_max_distance: 128
 layer_norm_epsilon: 1.0e-6
-max_len: 512
+max_len: 256
 
 # span masking per RDF Completion 1
-enable_entity_spans: false
-compute_span_metrics: false
+enable_entity_spans: true
+compute_span_metrics: true
 
 # training
 batch_size: 16
@@ -59,7 +59,7 @@ early_stopping:
   min_delta: 0.0
 
 wandb:
-  mode: "online" # disabled, offline, online
+  mode: "disabled" # disabled, offline, online
   project: "nanosocrates"
   entity: null
   run_name: null

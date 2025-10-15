@@ -43,7 +43,10 @@ class _PairwiseMetric(Metric):
     full_state_update = True
 
     def __init__(self, fn: Callable[[Sequence[str], Sequence[str]], float]):
-        super().__init__(compute_on_cpu=True)
+        # Avoid compute_on_cpu=True because torchmetrics may try to move
+        # list states (of strings) to CPU by calling `.to()` on each item.
+        # Keep default behaviour to prevent calling `.to()` on strings.
+        super().__init__()
         self._fn = fn
         self.add_state("predictions", default=[], dist_reduce_fx=None)
         self.add_state("references", default=[], dist_reduce_fx=None)
@@ -331,11 +334,16 @@ def accuracy_score(predictions: Sequence[str], references: Sequence[str]) -> flo
 def compute_text_generation_metrics(
     predictions: Sequence[str], references: Sequence[str]
 ) -> dict:
-    """Return a dictionary with BLEU, ROUGE-L and METEOR scores."""
-    metrics = _TEXT_GENERATION_METRICS.clone()
-    metrics.update(predictions, references)
-    computed = metrics.compute()
-    return {name: float(value.cpu().item()) for name, value in computed.items()}
+    """Return a dictionary with BLEU, ROUGE-L and METEOR scores.
+
+    Compute scores directly to avoid torchmetrics' restrictions on
+    non-tensor list states within MetricCollection.
+    """
+    return {
+        "bleu": float(corpus_bleu(predictions, references)),
+        "rouge_l": float(rouge_l_score(predictions, references)),
+        "meteor": float(meteor_score(predictions, references)),
+    }
 
 
 def compute_triple_metrics(

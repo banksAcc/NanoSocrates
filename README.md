@@ -112,7 +112,7 @@ pip install -r requirements.txt
    - Il numero di esempi nel batch coincide con `batch_size` del config (16 nel
      preset `configs/train/multitask_default.yaml`). Se vuoi restringerlo, passa
      `--override batch_size=4` o modifica il valore nel YAML.
-   - Usa `--steps N` per cambiare il numero di ottimizzazioni (es. `--steps 400`).
+   - ~~Usa `--steps N` per cambiare il numero di ottimizzazioni (es. `--steps 400`).~~
    - In alternativa `--epochs M` forza il numero di epoche (una per aggiornamento
      quando si overfitta un singolo batch).
      Qualsiasi ulteriore `--override` passato da RUN viene rispettato.

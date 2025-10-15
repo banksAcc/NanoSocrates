@@ -648,6 +648,9 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                 )
                 raw_preds = preds
                 token_ids = [[] for _ in preds]
+            # If examples lack a per-example task tag, group under dataset task
+            if all((str(t).lower() if t is not None else "unknown") == "unknown" for t in task_tags):
+                task_tags = [str(task_name)] * len(task_tags)
             grouped = _group_by_task(preds, refs, task_tags)
             metrics_payload: Dict[str, object] = {}
             for t_name, bucket in grouped.items():
