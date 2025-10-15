@@ -21,10 +21,6 @@ datasets:
     weight: 2
 
 # modello
-use_rope: false
-use_mla: false
-interleave_ratio: 0.0
-architecture: "t5"
 d_model: 256
 nhead: 4
 enc_layers: 2
@@ -36,9 +32,6 @@ relative_attention_max_distance: 128
 layer_norm_epsilon: 1.0e-6
 max_len: 256
 
-# span masking per RDF Completion 1
-enable_entity_spans: true
-compute_span_metrics: true
 
 # training
 batch_size: 16

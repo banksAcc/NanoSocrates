@@ -19,11 +19,10 @@ nanosocrates/
 │  ├─ eval/
 │  │  └─ multitask_default.yaml # preset di valutazione multitask (alias-driven)
 │  ├─ tokenizer/
-│  │  └─ bpe_default.yaml            # addestramento tokenizer + token speciali
+│  │  └─ bpe_default.yaml        # addestramento tokenizer + token speciali
 │  └─ train/
-│     ├─ baseline.yaml           # encoder-decoder vanilla (sinusoidale)
-│     ├─ multitask_default.yaml  # preset multitask T5 3:3:2:2
-│     └─ rope_on.yaml            # variante con Rotary Positional Embeddings
+│     ├─ baseline.yaml           # preset T5 più ampio
+│     └─ multitask_default.yaml  # preset multitask T5 3:3:2:2
 ├─ data/                         # directory popolata dagli script (raw/interim/processed/vocab)
 ├─ scripts/
 │  ├─ build_dataset.py           # crea dataset e task JSONL (richiede PYTHONPATH=src)
@@ -40,7 +39,7 @@ nanosocrates/
    ├─ data/                      # fetch DBpedia/Wikipedia, pairing, serializzazione
    ├─ decoding/                  # strategie di decoding e vincoli
    ├─ eval/                      # metriche e orchestratore valutazione
-   ├─ model/                     # TinySeq2Seq, layer MHA/MLA, perdite
+   ├─ model/                     # TinySeq2Seq, layer T5, perdite
    ├─ tokenizer/                 # wrapper IO e libreria per BPE
    ├─ training/                  # dataloader multitask, loop, scheduler
    ├─ utils/                     # config YAML, IO, logging, integrazione W&B
@@ -49,7 +48,7 @@ nanosocrates/
 
 ---
 
-## 2) Quickstart"""Main training and evaluation loop for the transformer model."""
+## 2) Quickstart
 
 ### 2.1 Ambiente
 
@@ -227,19 +226,18 @@ Vedi esempi in `configs/` per:
 - `decode/constrained.yaml` — vincoli leggeri per RDF
 - blocco `wandb:` — parametri di logging (project, entity, run_name, mode, tags, watch)
 
-### Nuove opzioni modello
+### Architettura del modello
 
-- `architecture`: scegli `"vanilla"` per mantenere l'encoder–decoder classico
-  (nn.Transformer/varianti MLA+RoPE) oppure `"t5"` per attivare blocchi T5 con LayerNorm
-  pre-attention, feed-forward GeGLU e bias posizionali relativi a bucket. La variante T5
-  applica automaticamente lo scaling `√d_model` sulle embedding e riutilizza un dropout
-  condiviso per encoder/decoder.
-- `relative_attention_num_buckets` e `relative_attention_max_distance`: controllano la
-  discretizzazione delle distanze per il bias relativo T5. Sono ignorati in modalità
-  "vanilla" ma diventano obbligatori quando `architecture="t5"`.
-- `layer_norm_epsilon`: epsilon numerico per le LayerNorm T5.
-- Quando `architecture="t5"` le opzioni `use_rope`, `use_mla` e `interleave_ratio` sono
-  disabilitate (sollevano errore in config misti).
+`TinySeq2Seq` ora implementa esclusivamente un encoder–decoder ispirato a T5:
+
+- attenzioni multi-head con bias posizionali relativi a bucket;
+- LayerNorm in configurazione pre-attention e feed-forward GeGLU;
+- embedding condivise fra encoder e decoder scalate di `√d_model`.
+
+I parametri esposti nei config (`d_model`, `nhead`, `enc_layers`, `dec_layers`,
+`ff_dim`, `dropout`, `relative_attention_num_buckets`,
+`relative_attention_max_distance`, `layer_norm_epsilon`, `max_len`) consentono di
+calibrare dimensione e profondità del modello mantenendo fisso il design T5.
 
 ---
 
@@ -273,28 +271,10 @@ Addestra **BPE 24k** su (testo + RDF linearizzato) con i token speciali. Artefat
 Il modello di riferimento è `TinySeq2Seq` con **3 encoder layer + 3 decoder layer**
 (`d_model=384`, `nhead=6`, `ff_dim=1536`, dropout `0.1`). Il preset di default
 (`configs/train/multitask_default.yaml`) addestra un T5 compatto sui quattro task
-Text2RDF/RDF2Text/RDFComp1/RDFComp2 con mixing **3:3:2:2**. Le varianti
-`baseline.yaml` e `rope_on.yaml` riusano lo stesso schedule multitask rispettivamente
-con posizioni sinusoidali e RoPE per facilitare le ablation. Gli script di sanity
-(`src.run overfit` o `scripts/sanity_overfit.py`) permettono di validare rapidamente
-la pipeline.
-
-### 6.1 Varianti posizionali/attenzione
-
-I config in `configs/train/*.yaml` espongono tre interruttori per sperimentare
-varianti architetturali del `TinySeq2Seq`:
-
-- `use_rope`: abilita le Rotary Positional Embeddings applicate alle
-  proiezioni query/key al posto dell'iniezione sinusoidale. Il parametro
-  `max_len` del config viene riutilizzato come `max_position_embeddings`.
-- `use_mla`: sostituisce l'attenzione classica con un blocco
-  **Multi-Linear Attention** leggero; quando combinato con `interleave_ratio`
-  consente di fondere MLA e attenzione standard nella stessa testa.
-- `interleave_ratio`: coefficiente (0.0–1.0) che controlla quanto del risultato
-  dell'attenzione derivi dal ramo MLA (1.0 = solo MLA, 0.5 = mix paritetico).
-
-Gli esempi pronti (`multitask_default.yaml`, `baseline.yaml`, `rope_on.yaml`)
-mostrano come attivare/disattivare i flag per le ablation.
+Text2RDF/RDF2Text/RDFComp1/RDFComp2 con mixing **3:3:2:2**. Il preset
+`baseline.yaml` fornisce un'alternativa più ampia mantenendo lo stesso schema di
+training. Gli script di sanity (`src.run overfit` o `scripts/sanity_overfit.py`)
+permettono di validare rapidamente la pipeline.
 
 ---
 
@@ -312,7 +292,7 @@ normalizzazione dei prefissi sono gestiti a livello di dataset (`src/data/serial
 
 - **RDF2Text**: ROUGE-L, BLEU, METEOR
 - **Text2RDF/Comp-2**: Precision/Recall/**F1** su triple
-- **Comp-1**: **Accuracy** sullo span
+- **Comp-1**: **Accuracy** sull'entità/predicato mascherato
 
 Le metriche sono calcolate tramite `src/eval/metrics.py` e orchestrate da
 `src/eval/evaluate.py`, che carica i checkpoint, costruisce i `DataLoader`
@@ -336,8 +316,7 @@ Il comando genera un report strutturato (stampato a terminale e salvato su disco
 ed effettua l'eventuale logging su Weights & Biases se abilitato nel config.
 Per retrocompatibilità rimane disponibile anche `python -m scripts.eval_all`,
 che reindirizza automaticamente verso il subcomando `evaluate` e sfrutta
-`model_alias` per impostare l'override se non già specificato. Usa
-`--model-alias rope_on` per puntare al checkpoint RoPE (`checkpoints/rope_on/best.pt`).
+`model_alias` per impostare l'override se non già specificato.
 Gli alias predefiniti includono anche `mix` (sinonimo di `multitask_default`) e
 `baseline` per il vecchio encoder–decoder sinusoidale.
 
@@ -362,10 +341,8 @@ per salvare lo stesso payload su disco.
 
 ## 9) Ablation (Step 9) — breve e mirata
 
-- **Positional**: sinusoidale (`baseline.yaml`) vs **RoPE** (`rope_on.yaml`)
-- **Attention**: standard vs **MLA** (abilita `use_mla` e calibra `interleave_ratio`)
-- **Architecture**: T5 (`multitask_default.yaml`) vs encoder-decoder vanilla (`baseline.yaml`)
-  mantenendo il mixing multitask **3:3:2:2**.
+- **Dimensione**: confronta preset compatti (`multitask_default.yaml`) e ampi (`baseline.yaml`).
+- **Profondità**: varia `enc_layers`/`dec_layers` mantenendo fisso il mixing multitask **3:3:2:2**.
   Metriche: ROUGE-L, F1 triple, Accuracy Comp-1, costo/epoch.
 
 Esegui i test rapidi sulle varianti con:
@@ -391,11 +368,9 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 | `ff_dim`                    | Dimensione feed-forward           | 1536–2560 (≈4× `d_model`)                             |
 | `dropout`                   | Dropout condiviso MHA/FFN         | 0.0–0.2                                               |
 | `max_len`                   | Sequenza massima gestita          | 256 (baseline) / 512 (triple lunghe)                  |
-| `use_rope`                  | Rotary Position Embeddings        | Alternativa alle sinusoidali classiche                |
-| `use_mla`                   | Multihead Latent Attention        | Richiede `CustomTransformer` in `src/model/layers.py` |
-| `interleave_ratio`          | Mix MLA ↔ attenzione classica     | 0.0 = disattivato, 0.5 = mix, 1.0 = solo MLA          |
-| `enable_entity_spans`       | Propaga span mask nei batch       | Necessario per RDF Completion 1                       |
-| `compute_span_metrics`      | Aggiunge metriche sugli span      | Impatta marginalmente sui tempi                       |
+| `relative_attention_num_buckets` | Bucket per bias relativo        | 16–64; valori alti gestiscono distanze lunghe         |
+| `relative_attention_max_distance` | Distanza massima per i bucket   | 64–256 in base alla lunghezza delle sequenze          |
+| `layer_norm_epsilon`        | Epsilon numerico LayerNorm        | Default 1e-6; aumentare solo in caso di instabilità   |
 
 ### 10.2 Ottimizzazione & controllo training
 
@@ -435,10 +410,9 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 ### 10.5 Config valutazione (`configs/eval/*.yaml`)
 
 - `checkpoint`, `tokenizer_file`, `device`: cosa caricare e dove inferire.
-- `model_alias`: mapping rapido verso i checkpoint salvati (`mix`, `rope_on`, ...).
+- `model_alias`: mapping rapido verso i checkpoint salvati (es. `mix`).
 - `batch_size`, `num_workers`: throughput inferenza.
 - `decoding.max_new_tokens`: limite della generazione autoregressiva.
-- `enable_entity_spans`: calcola metriche MASK se il checkpoint le supporta.
 - Blocchi `tasks.*.val/test`: percorsi per split; è possibile escludere task
   per valutazioni parziali.
 
@@ -450,11 +424,11 @@ Questa tabella raccoglie le chiavi YAML più rilevanti (sezioni `train/` ed
 - **Text2RDF (precision/F1)**: prova `scheduler=linear` con
   `warmup_ratio=0.08` e `min_lr_ratio=0.02`; controlla che i marker di task
   siano sempre presenti nell’input.
-- **RDF Completion 1 (mask accuracy)**: assicurati di avere
-  `enable_entity_spans=true` e `compute_span_metrics=true`; valuta batch più
-  piccoli per ridurre il rumore sugli span lunghi.
-- **RDF Completion 2 (triple F1)**: sperimenta `use_mla=true` con
-  `interleave_ratio=0.3` per enfatizzare le dipendenze latenti.
+- **RDF Completion 1 (mask accuracy)**: verifica che gli input contengano il
+  marker `<MASK>` e valuta batch più piccoli per ridurre il rumore sulle entità
+  lunghe.
+- **RDF Completion 2 (triple F1)**: aumenta `ff_dim` e `num_decoder_layers` per
+  migliorare la modellazione delle sequenze lunghe.
 - **Diagnostica rapida**: `python -m src.run overfit --cfg ... --toy` deve far
   scendere la loss <0.05; in caso contrario ricontrolla tokenizer, dataset e
   sequenza di token speciali.

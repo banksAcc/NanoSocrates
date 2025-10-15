@@ -147,7 +147,12 @@ def decode_to_text(model, tok, input_text: str, **kwargs) -> str:
     # Keep special tokens in the decoded string so that structural markers
     # (e.g., <SUBJ>, <PRED>, <OBJ>, <EOT>) are preserved for non-textual tasks.
     # Textual tasks explicitly forbid structural tokens during decoding.
-    text = tok.tk.decode(ids, skip_special_tokens=False)
+    try:
+        text = tok.tk.decode(ids, skip_special_tokens=False)
+    except TypeError:
+        # Alcuni tokenizer di test espongono una API semplificata senza
+        # l'argomento keyword; in tal caso richiamiamo la versione posizionale.
+        text = tok.tk.decode(ids)
     if debug:
         LOGGER.debug("[decode] decoded text='%s'", text)
     if return_ids:
