@@ -166,12 +166,7 @@ def _load_model_from_checkpoint(
         dropout=float(saved_cfg["dropout"]),
         pad_id=tokenizer.pad_id,
         tie_embeddings=True,
-        use_mla=bool(saved_cfg.get("use_mla", False)),
-        use_rope=bool(saved_cfg.get("use_rope", False)),
-        interleave_ratio=float(saved_cfg.get("interleave_ratio", 0.0)),
         max_position_embeddings=int(saved_cfg.get("max_len", 256)),
-        compute_span_metrics=bool(saved_cfg.get("compute_span_metrics", False)),
-        architecture=str(saved_cfg.get("architecture", "vanilla")),
         relative_attention_num_buckets=int(saved_cfg.get("relative_attention_num_buckets", 32)),
         relative_attention_max_distance=int(saved_cfg.get("relative_attention_max_distance", 128)),
         layer_norm_epsilon=float(saved_cfg.get("layer_norm_epsilon", 1e-6)),
@@ -209,10 +204,6 @@ def _compute_loss(model: TinySeq2Seq, dataloader: DataLoader, device: str) -> fl
         att = batch["attention_mask"].to(device, non_blocking=True)
         lab = batch["labels"].to(device, non_blocking=True)
         extra = {}
-        if "mask_positions" in batch:
-            extra["mask_positions"] = batch["mask_positions"].to(device, non_blocking=True)
-        if "mask_lengths" in batch:
-            extra["mask_lengths"] = batch["mask_lengths"].to(device, non_blocking=True)
         out = model(inp, att, labels=lab, **extra)
         loss = out.get("loss")
         if loss is None:
@@ -576,13 +567,6 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
         config.get("tasks") if config.get("tasks") is not None else config.get("datasets")
     )
 
-    enable_entity_spans = bool(
-        config.get(
-            "enable_entity_spans",
-            saved_cfg.get("enable_entity_spans", False),
-        )
-    )
-
     collate = partial(pad_collate, pad_id=tokenizer.pad_id)
 
     report: Dict[str, object] = {
@@ -603,7 +587,6 @@ def evaluate_from_config(config: Mapping[str, object]) -> Dict[str, object]:
                 str(path),
                 tokenizer=tokenizer,
                 max_len=max_len,
-                enable_entity_spans=enable_entity_spans,
             )
             dataloader = DataLoader(
                 dataset,

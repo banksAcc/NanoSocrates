@@ -379,7 +379,5 @@ class TrainingLoop:
             "attention_mask",
             "decoder_input_ids",
             "labels",
-            "mask_positions",
-            "mask_lengths",
         }
         return {k: v for k, v in batch.items() if k in allowed_keys}

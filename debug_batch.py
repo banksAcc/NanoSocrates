@@ -100,8 +100,6 @@ def inspect_batch(
     raw_inputs = batch.get("raw_input", [])
     raw_targets = batch.get("raw_target", [])
     films = batch.get("films", [])
-    mask_positions = batch.get("mask_positions")
-    mask_lengths = batch.get("mask_lengths")
 
     num_examples = min(batch["input_ids"].size(0), limit)
     for idx in range(num_examples):
@@ -123,13 +121,6 @@ def inspect_batch(
         print(f"Contiene token [MASK]/<MASK>: {_contains_mask_token(decoded_input)}")
         print(f"Labels decodificate: {decoded_labels}")
         print(f"Numero di token da predire (esempio): {example_predict_tokens}")
-
-        if mask_positions is not None and mask_lengths is not None:
-            positions = mask_positions[idx].tolist()
-            lengths = mask_lengths[idx].tolist()
-            predicted = sum(int(length) for length in lengths)
-            print(f"Posizioni maschera: {positions}")
-            print(f"Lunghezze maschera: {lengths} (totale={predicted})")
 
     if num_examples < batch["input_ids"].size(0):
         print(
