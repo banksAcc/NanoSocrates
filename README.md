@@ -82,7 +82,6 @@ pip install -r requirements.txt
 5. **Valuta il checkpoint** (report JSON + metriche aggregate)
    ```bash
    python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override checkpoint=checkpoints/multitask_default/best.pt --output reports/multitask_default_eval.json
-   # legacy wrapper → python -m scripts.eval_all --cfg configs/eval/multitask_default.yaml
    ```
 
 ### 2.3 Tutorial — sottoinsieme toy (20 film)
@@ -106,22 +105,20 @@ pip install -r requirements.txt
    ```bash
    python -m src.run overfit --cfg configs/train/multitask_default.yaml --toy
    ```
-   Il comando abilita `overfit_one_batch=true`, disattiva l'early stopping e,
-   per impostazione predefinita, esegue 200 aggiornamenti consecutivi sullo
-   stesso batch.
+   Il comando forza il dataset a un singolo batch, disattiva l'early stopping e
+   per impostazione predefinita esegue 200 aggiornamenti consecutivi sullo stesso batch.
    - Il numero di esempi nel batch coincide con `batch_size` del config (16 nel
      preset `configs/train/multitask_default.yaml`). Se vuoi restringerlo, passa
      `--override batch_size=4` o modifica il valore nel YAML.
-   - ~~Usa `--steps N` per cambiare il numero di ottimizzazioni (es. `--steps 400`).~~
-   - In alternativa `--epochs M` forza il numero di epoche (una per aggiornamento
-     quando si overfitta un singolo batch).
+   - Usa `--steps N` per cambiare il numero di ottimizzazioni (es. `--steps 400`).
      Qualsiasi ulteriore `--override` passato da RUN viene rispettato.
 2. In alternativa esiste lo script dedicato:
    ```bash
    python -m scripts.sanity_overfit --cfg configs/train/multitask_default.yaml --toy
    ```
-3. Verifica che la loss scenda rapidamente verso ~0: conferma che tokenizer,
-   dataloader, loop di training e logging siano correttamente collegati.
+3. Vedrai i log INFO con le metriche di validazione ad ogni epoca e la perdita nel
+   postfix della progress bar. Verifica che la loss scenda rapidamente verso ~0:
+   questo conferma che tokenizer, dataloader, loop di training e logging sono collegati.
 
 ### 2.5 Tutorial — valutazione con Weights & Biases
 

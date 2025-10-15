@@ -172,7 +172,7 @@ def _print_report(report: Dict[str, object]) -> None:
                 print(f"        samples={vals.get('samples', 0)}")
 
 
-def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
+def run_training(cfg: Dict[str, Any], *, overfit: bool = False, overfit_steps: int | None = None) -> None:
     """Esegue l'intero ciclo di training partendo da un config strutturato."""
     seed = int(cfg.get("seed", 42))
     set_seed(seed)
@@ -216,6 +216,9 @@ def run_training(cfg: Dict[str, Any], *, overfit: bool = False) -> None:
     )
 
     num_epochs = int(cfg.get("num_epochs", 1))
+    # If overfitting, allow mapping an explicit step count to epochs (1 batch/epoch)
+    if overfit and overfit_steps is not None and overfit_steps > 0:
+        num_epochs = int(overfit_steps)
     grad_accum_steps = max(1, int(cfg.get("gradient_accumulation_steps", 1)))
 
     try:
@@ -286,9 +289,40 @@ def cmd_train(args: argparse.Namespace) -> None:
 
 
 def cmd_overfit(args: argparse.Namespace) -> None:
-    """Entry point for the ``overfit`` sub-command."""
-    cfg = _prepare_config(args)
-    run_training(cfg, overfit=True)
+    """Entry point for the ``overfit`` sub-command.
+
+    Applies safe defaults for overfitting a single batch: disables regularisation
+    (dropout/weight decay), disables schedulers/warmup, increases logging
+    frequency, and maps --steps to epochs when provided.
+    """
+    base_cfg = _prepare_config(args)
+    cfg: Dict[str, Any] = dict(base_cfg)
+
+    # Friendly defaults for overfit mode (can be overridden via --override)
+    cfg.setdefault("dropout", 0.0)
+    cfg["weight_decay"] = 0.0
+    cfg["scheduler"] = ""  # disable scheduler
+    cfg["warmup_ratio"] = 0.0
+    cfg.setdefault("log_every_n_steps", 1)
+    cfg.setdefault("num_workers", 0)
+
+    # Ensure single-batch dataset by default
+    if "batch_size" in cfg and "overfit_samples" not in cfg:
+        try:
+            cfg["overfit_samples"] = int(cfg["batch_size"])
+        except Exception:
+            cfg["overfit_samples"] = 8
+
+    # Disable early stopping by setting a very large patience
+    early = dict(cfg.get("early_stopping", {}) or {})
+    early["patience"] = int(1e9)
+    cfg["early_stopping"] = early
+
+    overfit_steps = getattr(args, "steps", None)
+    if overfit_steps is not None and overfit_steps > 0:
+        cfg["num_epochs"] = int(overfit_steps)
+
+    run_training(cfg, overfit=True, overfit_steps=overfit_steps)
 
 def enum_to_str(obj):
     if isinstance(obj, Enum):
@@ -381,6 +415,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_overfit = sub.add_parser("overfit", help="Forza l'overfit di un singolo batch")
     add_common_overrides(p_overfit)
+    p_overfit.add_argument(
+        "--steps",
+        type=int,
+        default=200,
+        help="Numero di aggiornamenti consecutivi sullo stesso batch (default: 200)",
+    )
 
     p_eval = sub.add_parser("evaluate", help="Valuta un checkpoint sui task indicati")
     add_common_overrides(p_eval)

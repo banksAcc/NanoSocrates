@@ -73,5 +73,3 @@ class MaskedLMTaskModule(nn.Module):
                         "mask_accuracy": float(correct / total) if total else 0.0
                     }
         return result
-
-*** End of File ***
