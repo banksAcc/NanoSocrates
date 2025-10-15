@@ -193,3 +193,39 @@ def test_beam_search_avoids_repeated_trigrams_and_preserves_rdf_structure():
     # Check that no trigram is repeated in the generated sequence.
     trigrams = [tuple(tokens[i : i + 3]) for i in range(len(tokens) - 2)]
     assert len(trigrams) == len(set(trigrams))
+
+
+def test_beam_search_prefers_completed_sequences_over_partial_candidates():
+    vocab = [
+        "<pad>",
+        "<SOT>",
+        "<EOT>",
+        "A",
+        "B",
+        "C",
+        "D",
+        "X",
+    ]
+    tok = DummyTokWrapper(vocab)
+    transitions = {
+        (1,): {3: 0.0, 6: 0.0},
+        (1, 3): {4: 3.0, 2: 2.0},
+        (1, 6): {2: 1.5, 7: 1.0},
+    }
+    model = DummyModel(len(vocab), transitions)
+
+    _, ids = decode_to_text(
+        model,
+        tok,
+        "",
+        max_new_tokens=4,
+        device="cpu",
+        return_ids=True,
+        use_beam_search=True,
+        beam_size=2,
+    )
+
+    tokens = _decode_ids(tok, ids)
+
+    assert tokens[-1] == "<EOT>", "beam search should prioritise finished sequences"
+    assert "B" not in tokens, "partial continuations should not outrank completed beams"

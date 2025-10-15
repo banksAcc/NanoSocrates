@@ -411,7 +411,7 @@ def beam_search_decode(
         if early_stopping and len(completed) >= num_beams:
             break
 
-    if active_sequences:
+    if not completed and active_sequences:
         for score, seq in zip(active_scores.tolist(), active_sequences):
             length = seq.size(0) - 1
             adjusted = float(score) / _length_penalty(length, length_penalty)
