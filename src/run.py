@@ -21,7 +21,11 @@ from src.decoding.base import decode_to_text
 from src.eval.evaluate import evaluate_from_config, load_model_and_tokenizer
 from src.data.builders import build_and_cache_datasets
 from src.model.transformer import TinySeq2Seq
-from src.training.dataloaders import create_multitask_dataloader
+from src.training.dataloaders import (
+    StaticBatchLoader,
+    create_multitask_dataloader,
+    materialise_single_batch,
+)
 from src.training.loop import TrainingLoop
 from src.training.scheduler import create_scheduler
 from src.utils.config import (
@@ -290,22 +294,34 @@ def run_training(
     batch_size = int(cfg.get("batch_size", 16))
     num_workers = int(cfg.get("num_workers", 0))
 
-    train_loader = create_multitask_dataloader(
-        train_dataset,
-        tokenizer=tokenizer,
-        batch_size=batch_size,
-        ratios=ratios,
-        num_workers=num_workers,
-        shuffle=not overfit,
-    )
-    val_loader = create_multitask_dataloader(
-        val_dataset,
-        tokenizer=tokenizer,
-        batch_size=batch_size,
-        ratios=ratios,
-        num_workers=num_workers,
-        shuffle=False,
-    )
+    if overfit:
+        cached_batch = materialise_single_batch(
+            train_dataset, tokenizer=tokenizer, batch_size=batch_size
+        )
+        batch_size = cached_batch["input_ids"].size(0)
+        LOGGER.info(
+            "Modalità overfit: riutilizzo un batch statico da %d esempi",
+            batch_size,
+        )
+        train_loader = StaticBatchLoader(cached_batch)
+        val_loader = StaticBatchLoader(cached_batch)
+    else:
+        train_loader = create_multitask_dataloader(
+            train_dataset,
+            tokenizer=tokenizer,
+            batch_size=batch_size,
+            ratios=ratios,
+            num_workers=num_workers,
+            shuffle=True,
+        )
+        val_loader = create_multitask_dataloader(
+            val_dataset,
+            tokenizer=tokenizer,
+            batch_size=batch_size,
+            ratios=ratios,
+            num_workers=num_workers,
+            shuffle=False,
+        )
 
     if preview_batch:
         _preview_dataloader_batch(train_loader, tokenizer, limit=preview_batch_limit)
