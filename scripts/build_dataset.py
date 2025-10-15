@@ -78,6 +78,7 @@ def main() -> None:
             triples_stream,
             texts_stream,
             min_triples=int(cfg.get("min_triples_per_film", 3)),
+            allowed_languages=cfg.get("allowed_languages"),
         )
     )
     LOGGER.info("Paired examples (films): %d", len(pairs))

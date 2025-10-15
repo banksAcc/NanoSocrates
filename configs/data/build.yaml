@@ -1,6 +1,11 @@
 # Filtri minimi di qualità: scarta film con meno di N triple utili.
 min_triples_per_film: 5
 
+# Limita i film ai soli titoli nella lingua indicata.
+# Aggiungi o modifica gli URI DBpedia ammessi se vuoi includere altre lingue.
+allowed_languages:
+  - dbr:English_language
+
 # Lunghezza massima delle sequenze (verifica in build, ma il vero cut avviene in tokenizer/model).
 max_seq_len: 256
 
