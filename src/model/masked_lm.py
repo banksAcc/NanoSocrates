@@ -8,16 +8,7 @@ import torch
 from torch import nn
 from transformers import AutoModelForMaskedLM, PreTrainedModel, PreTrainedTokenizerBase
 
-from src.utils.special_tokens import REQUIRED_SPECIAL_TOKENS
-
-
-def ensure_tokenizer_special_tokens(tokenizer: PreTrainedTokenizerBase) -> None:
-    """Ensure that project-specific markers exist in the provided tokenizer."""
-
-    vocab = tokenizer.get_vocab()
-    additional_tokens = [tok for tok in REQUIRED_SPECIAL_TOKENS if tok not in vocab]
-    if additional_tokens:
-        tokenizer.add_special_tokens({"additional_special_tokens": additional_tokens})
+from src.utils.special_tokens import ensure_required_special_tokens
 
 
 class MaskedLMTaskModule(nn.Module):
@@ -33,7 +24,7 @@ class MaskedLMTaskModule(nn.Module):
     ) -> None:
         super().__init__()
         self.tokenizer = tokenizer
-        ensure_tokenizer_special_tokens(self.tokenizer)
+        ensure_required_special_tokens(self.tokenizer)
 
         kwargs = dict(model_kwargs or {})
         self.model: PreTrainedModel = AutoModelForMaskedLM.from_pretrained(
@@ -42,7 +33,11 @@ class MaskedLMTaskModule(nn.Module):
         )
 
         if resize_token_embeddings:
-            self.model.resize_token_embeddings(len(self.tokenizer))
+            embedding_layer = self.model.resize_token_embeddings(len(self.tokenizer))
+            if embedding_layer.num_embeddings != len(self.tokenizer):
+                raise RuntimeError(
+                    "Model embeddings do not match tokenizer vocabulary size after resizing"
+                )
 
     def forward(
         self,
