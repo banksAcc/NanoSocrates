@@ -40,6 +40,7 @@ def pair_and_filter(
     priority_index: Dict[str, int] = {}
     if predicate_priority is not None:
         priority_index = {predicate: idx for idx, predicate in enumerate(predicate_priority)}
+
     discarded_by_predicate: Dict[str, int] = defaultdict(int)
     if allowed_languages is None:
         allowed_languages_set: Optional[Set[str]] = None
@@ -82,29 +83,18 @@ def pair_and_filter(
             dropped_few_triples += 1
             continue
 
-        predicate_buckets: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
-        first_seen: Dict[str, int] = {}
-        for idx, triple in enumerate(triples_unique):
-            predicate = triple[1]
-            predicate_buckets[predicate].append(triple)
-            if predicate not in first_seen:
-                first_seen[predicate] = idx
-
         capped_triples: List[Tuple[str, str, str]] = []
-        for predicate in sorted(
-            predicate_buckets,
-            key=lambda p: (priority_index.get(p, float("inf")), first_seen[p]),
-        ):
-            bucket = predicate_buckets[predicate]
+        kept_per_predicate: Dict[str, int] = defaultdict(int)
+        for triple in triples_unique:
+            predicate = triple[1]
             limit = predicate_caps.get(
                 predicate, predicate_object_cap if predicate_object_cap is not None else None
             )
-            if limit is not None:
-                capped = bucket[: int(limit)]
-                discarded_by_predicate[predicate] += max(0, len(bucket) - len(capped))
+            if limit is None or kept_per_predicate[predicate] < int(limit):
+                capped_triples.append(triple)
+                kept_per_predicate[predicate] += 1
             else:
-                capped = bucket
-            capped_triples.extend(capped)
+                discarded_by_predicate[predicate] += 1
 
         if len(capped_triples) < min_triples:
             dropped_few_triples += 1
@@ -121,7 +111,10 @@ def pair_and_filter(
         dropped_language,
     )
     if discarded_by_predicate:
-        for predicate, count in sorted(discarded_by_predicate.items(), key=lambda item: item[0]):
+        for predicate, count in sorted(
+            discarded_by_predicate.items(),
+            key=lambda item: (priority_index.get(item[0], float("inf")), item[0]),
+        ):
             logger.info(
                 "Pairing: predicate_cap predicate=%s discarded=%d", predicate, count
             )
