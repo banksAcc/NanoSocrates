@@ -2,30 +2,30 @@
   "total_films": 20,
   "per_split": {
     "train": [
-      "dbr:2012:_Kurse_a_di_Xtabai",
-      "dbr:Apan_Por",
-      "dbr:Bhagwaan_Dada",
-      "dbr:Blood-C:_The_Last_Dark",
-      "dbr:Honourable_Mention",
-      "dbr:How_to_Eat_Fried_Worms_(film)",
-      "dbr:Julieta_(film)",
-      "dbr:Leah_Gibson",
-      "dbr:Only_a_Woman_(1941_film)",
-      "dbr:Rosamund_Hanson",
-      "dbr:Rudra_Tandava",
-      "dbr:Silent_film"
+      "dbr:America_Abbayi",
+      "dbr:Beloved_(1965_film)",
+      "dbr:Café_Paradis",
+      "dbr:Calendar_Girls_(2015_film)",
+      "dbr:Callaway_Went_Thataway",
+      "dbr:Captain_America:_Civil_War",
+      "dbr:Captain_Horatio_Hornblower",
+      "dbr:Cargo_(2009_film)",
+      "dbr:Carmen_(2003_film)",
+      "dbr:Caro_diario",
+      "dbr:Prairie_Rustlers",
+      "dbr:Prehistoric_Women_(1967_film)"
     ],
     "val": [
-      "dbr:Aditya_Kapadia",
-      "dbr:Santa's_Little_Helper_(film)",
-      "dbr:Sean_Whalen",
-      "dbr:Thilakan"
+      "dbr:Amore_amaro",
+      "dbr:Cado_dalle_nubi",
+      "dbr:Captain_Eddie",
+      "dbr:Captain_Newman,_M.D."
     ],
     "test": [
-      "dbr:Alias_John_Preston",
-      "dbr:Beyond_the_Hills",
-      "dbr:Documentary_film",
-      "dbr:Sulabha_Deshpande"
+      "dbr:Amigos_para_La_Aventura",
+      "dbr:Captain_America:_The_Winter_Soldier",
+      "dbr:Carnal_Knowledge_(film)",
+      "dbr:Putham_Pudhu_Kaalai"
     ]
   },
   "tasks": {

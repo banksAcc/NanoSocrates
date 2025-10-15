@@ -124,5 +124,3 @@ class MLMDataModule:
             num_workers=self.num_workers,
             collate_fn=self.data_collator,
         )
-
-*** End of File ***
