@@ -21,16 +21,16 @@ datasets:
     weight: 2
 
 # modello
-d_model: 256
+d_model: 384
 nhead: 4
-enc_layers: 2
-dec_layers: 2
+enc_layers: 4
+dec_layers: 4
 ff_dim: 1536
 dropout: 0.1
 relative_attention_num_buckets: 32
 relative_attention_max_distance: 128
 layer_norm_epsilon: 1.0e-6
-max_len: 256
+max_len: 384
 
 
 # training

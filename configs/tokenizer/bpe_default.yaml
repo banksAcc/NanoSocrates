@@ -14,3 +14,5 @@ special_tokens:
   - "<Text2RDF>"
   - "<CONTINUERDF>"
   - "<MASK>"
+  - "dbr:"
+  - "dbo:"
