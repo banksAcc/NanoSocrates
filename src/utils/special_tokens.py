@@ -24,6 +24,8 @@ REQUIRED_SPECIAL_TOKENS: Tuple[str, ...] = (
     "<Text2RDF>",
     "<CONTINUERDF>",
     "<MASK>",
+    "dbr:",
+    "dbo:",
 )
 
 __all__ = [
