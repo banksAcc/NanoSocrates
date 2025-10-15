@@ -506,7 +506,15 @@ def greedy_decode(
 
 
 @torch.no_grad()
-def decode_to_text(model, tok, input_text: str, **kwargs) -> str:
+def decode_to_text(
+    model,
+    tok,
+    input_text: str,
+    *,
+    strip_start_token: bool = True,
+    skip_special_tokens: bool = False,
+    **kwargs,
+) -> str:
     """Wrapper pratico che nasconde la rimozione del token iniziale."""
 
     return_ids = bool(kwargs.pop("return_ids", False))
@@ -565,18 +573,28 @@ def decode_to_text(model, tok, input_text: str, **kwargs) -> str:
             logits_processors=logits_processors,
             **kwargs,
         )
-    start_id = _select_start_token_id(tok)
-    if ids and ids[0] == start_id:
-        ids = ids[1:]
-    # Keep special tokens in the decoded string so that structural markers
-    # (e.g., <SUBJ>, <PRED>, <OBJ>, <EOT>) are preserved for non-textual tasks.
-    # Textual tasks explicitly forbid structural tokens during decoding.
+    if strip_start_token:
+        start_id = _select_start_token_id(tok)
+        if ids and start_id is not None and ids[0] == int(start_id):
+            ids = ids[1:]
+    # Keep special tokens in the decoded string by default so that structural
+    # markers (e.g., <SUBJ>, <PRED>, <OBJ>, <EOT>) are preserved for non-textual
+    # tasks.  Textual tasks can opt into skipping them via *skip_special_tokens*.
     try:
-        text = tok.tk.decode(ids, skip_special_tokens=False)
+        text = tok.tk.decode(ids, skip_special_tokens=bool(skip_special_tokens))
     except TypeError:
         # Alcuni tokenizer di test espongono una API semplificata senza
         # l'argomento keyword; in tal caso richiamiamo la versione posizionale.
         text = tok.tk.decode(ids)
+        if skip_special_tokens:
+            special_tokens = {
+                token
+                for token in getattr(tok.tk, "get_vocab", lambda: {})().keys()
+                if isinstance(token, str) and token.startswith("<") and token.endswith(">")
+            }
+            for token in special_tokens:
+                text = text.replace(token, "")
+            text = " ".join(text.split())
     if debug:
         LOGGER.debug("[decode] decoded text='%s'", text)
     if return_ids:
