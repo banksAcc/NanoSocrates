@@ -1,6 +1,17 @@
 # Filtri minimi di qualità: scarta film con meno di N triple utili.
 min_triples_per_film: 5
 
+# Numero massimo di oggetti per predicato. Usa override per predicati ad alta
+# cardinalità per evitare di troncare informazioni rilevanti.
+predicate_object_cap: 5
+predicate_caps_override:
+  dbo:starring: 10
+  dbo:director: 3
+  dbo:writer: 5
+
+# Config principale DBpedia (usato per l'ordinamento whitelist dei predicati).
+dbpedia_config: configs/data/dbpedia.yaml
+
 # Limita i film ai soli titoli nella lingua indicata.
 # Aggiungi o modifica gli URI DBpedia ammessi se vuoi includere altre lingue.
 allowed_languages:

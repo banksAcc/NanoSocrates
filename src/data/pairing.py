@@ -18,16 +18,30 @@ def pair_and_filter(
     texts_stream: Iterable[dict],
     min_triples: int = 3,
     allowed_languages: Optional[Iterable[str]] = None,
+    predicate_object_cap: Optional[int] = None,
+    predicate_caps_override: Optional[Dict[str, int]] = None,
+    predicate_priority: Optional[Iterable[str]] = None,
 ) -> Iterator[dict]:
     """Join triple and text streams keeping only well-formed film records.
 
     The returned triples always expose the film as the explicit subject,
     regardless of the original triple direction provided upstream. When
     ``allowed_languages`` is provided, only films with at least one
-    ``dbo:language`` triple matching the allowed URIs are kept.
+    ``dbo:language`` triple matching the allowed URIs are kept. When a
+    ``predicate_object_cap`` (and optional overrides) is provided, triples are
+    grouped by predicate and truncated preserving the priority order supplied
+    via ``predicate_priority``.
     """
     triples_by_film: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
     languages_by_film: Dict[str, Set[str]] = defaultdict(set)
+    predicate_caps: Dict[str, int] = {
+        key: int(value) for key, value in (predicate_caps_override or {}).items()
+    }
+    priority_index: Dict[str, int] = {}
+    if predicate_priority is not None:
+        priority_index = {predicate: idx for idx, predicate in enumerate(predicate_priority)}
+
+    discarded_by_predicate: Dict[str, int] = defaultdict(int)
     if allowed_languages is None:
         allowed_languages_set: Optional[Set[str]] = None
     elif isinstance(allowed_languages, str):
@@ -69,8 +83,25 @@ def pair_and_filter(
             dropped_few_triples += 1
             continue
 
+        capped_triples: List[Tuple[str, str, str]] = []
+        kept_per_predicate: Dict[str, int] = defaultdict(int)
+        for triple in triples_unique:
+            predicate = triple[1]
+            limit = predicate_caps.get(
+                predicate, predicate_object_cap if predicate_object_cap is not None else None
+            )
+            if limit is None or kept_per_predicate[predicate] < int(limit):
+                capped_triples.append(triple)
+                kept_per_predicate[predicate] += 1
+            else:
+                discarded_by_predicate[predicate] += 1
+
+        if len(capped_triples) < min_triples:
+            dropped_few_triples += 1
+            continue
+
         kept += 1
-        yield {"film": film, "text": text, "triples": triples_unique}
+        yield {"film": film, "text": text, "triples": capped_triples}
 
     logger.info(
         "Pairing: kept=%d, no_text=%d, few_triples=%d, disallowed_language=%d",
@@ -79,3 +110,11 @@ def pair_and_filter(
         dropped_few_triples,
         dropped_language,
     )
+    if discarded_by_predicate:
+        for predicate, count in sorted(
+            discarded_by_predicate.items(),
+            key=lambda item: (priority_index.get(item[0], float("inf")), item[0]),
+        ):
+            logger.info(
+                "Pairing: predicate_cap predicate=%s discarded=%d", predicate, count
+            )
