@@ -12,6 +12,12 @@ generation_params:
   max_new_tokens: 256
   min_new_tokens: 1
   debug_generation: true
+  use_beam_search: true
+  beam_size: 4
+  length_penalty: 1.0
+  early_stopping: true
+  no_repeat_ngram_size: 3
+  repetition_penalty: 1.1
 
 # path split per task
 tasks:
