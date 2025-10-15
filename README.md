@@ -105,10 +105,41 @@ pip install -r requirements.txt
    ```bash
    python -m src.run train --cfg configs/train/multitask_default.yaml
    ```
+   - Nei log di validazione viene riportata anche la metrica `exact_match`: indica la
+     frazione di esempi in cui l'intera sequenza generata coincide con il target e serve
+     come controllo rapido durante l'overfit/sanity check. Non va interpretata come una
+     *accuracy* token-level o task-specific.
 5. **Valuta il checkpoint** (report JSON + metriche aggregate)
    ```bash
    python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override checkpoint=checkpoints/multitask_default/best.pt --output reports/multitask_default_eval.json
    ```
+   - I parametri di generazione (es. attivare il beam search con vincolo sulla
+     ripetizione) sono configurabili nel blocco `generation_params` del file YAML;
+     quelli presenti in `configs/eval/multitask_default.yaml` abilitano di default un
+     beam search a 4 ipotesi con `length_penalty=1.0`, `no_repeat_ngram_size=3`,
+     `repetition_penalty=1.1` ed `early_stopping`.
+
+#### 2.2.1 Controllare il decoding dalla CLI
+
+Per esperimenti rapidi è possibile usare il comando `predict` del runner o lo script
+`scripts/predict_example.py` passando gli stessi argomenti:
+
+```bash
+python -m src.run predict \
+    --checkpoint checkpoints/multitask_default/best.pt \
+    --tokenizer data/vocab/bpe.json \
+    --input "<SOT> <SUBJ> Film <PRED> director <OBJ>" \
+    --task text2rdf \
+    --use-beam-search \
+    --beam-size 4 \
+    --length-penalty 1.0 \
+    --no-repeat-ngram-size 3 \
+    --repetition-penalty 1.1
+```
+
+I flag permettono di replicare da terminale le stesse impostazioni del file YAML,
+inclusa la disattivazione dell'`early_stopping` (`--no-early-stopping`) quando si
+vuole esplorare l'intero spazio di ricerca del beam.
 
 ### 2.3 Tutorial — sottoinsieme toy (20 film)
 
@@ -121,7 +152,7 @@ pip install -r requirements.txt
 3. Esegui training e valutazione puntando ai nuovi file con il flag `--toy`:
    ```bash
    python -m src.run train --cfg configs/train/multitask_default.yaml --toy
-   
+
    python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override checkpoint=checkpoints/multitask_default/best.pt --output reports/multitask_default_eval.json --toy
    ```
 

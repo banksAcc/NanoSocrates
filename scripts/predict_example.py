@@ -41,6 +41,16 @@ def main() -> None:
     ap.add_argument("--task", choices=list(TASK_MARKERS.keys()))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--max-new-tokens", type=int, default=128)
+    ap.add_argument("--use-beam-search", action="store_true")
+    ap.add_argument("--beam-size", type=int, default=4)
+    ap.add_argument("--length-penalty", type=float, default=1.0)
+    ap.add_argument("--no-repeat-ngram-size", type=int, default=3)
+    ap.add_argument("--repetition-penalty", type=float, default=1.1)
+    ap.add_argument(
+        "--no-early-stopping",
+        action="store_true",
+        help="Disabilita l'early stopping durante il beam search",
+    )
     ap.add_argument("--model-override", nargs="*", default=[])
     args = ap.parse_args()
 
@@ -64,6 +74,12 @@ def main() -> None:
         prepared,
         max_new_tokens=args.max_new_tokens,
         device=device,
+        use_beam_search=args.use_beam_search,
+        beam_size=args.beam_size,
+        length_penalty=args.length_penalty,
+        no_repeat_ngram_size=args.no_repeat_ngram_size,
+        repetition_penalty=args.repetition_penalty,
+        early_stopping=not args.no_early_stopping,
     )
     print(output)
 

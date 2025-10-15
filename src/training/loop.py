@@ -66,7 +66,7 @@ class TrainingLoop:
             early_stopping_metric: The validation metric to monitor for early
                 stopping and checkpointing.
             early_stopping_mode: 'min' if a lower metric is better (e.g., loss),
-                'max' if a higher metric is better (e.g., accuracy).
+                'max' if a higher metric is better (e.g., exact_match).
             wandb_run: An active wandb run object for logging.
         """
         self.model = model
