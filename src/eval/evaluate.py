@@ -34,6 +34,11 @@ STRUCTURAL_DECODE_TOKENS: tuple[str, ...] = (
     "<MASK>",
 )
 
+RDF_PREFIX_TOKENS: tuple[str, ...] = (
+    "dbr:",
+    "dbo:",
+)
+
 TEXTUAL_OUTPUT_TASKS: frozenset[str] = frozenset({"rdf2text", "rdfcomp1"})
 RDF_GRAMMAR_TASKS: frozenset[str] = frozenset({"text2rdf", "rdfcomp2"})
 
@@ -258,6 +263,12 @@ def _generate_predictions(
             dict.fromkeys(structural_token_ids + (int(pad_token_id),))
         )
 
+    rdf_prefix_token_ids: Tuple[int, ...] = tuple(
+        int(token_id)
+        for token_id in (tokenizer.token_to_id(token) for token in RDF_PREFIX_TOKENS)
+        if token_id is not None
+    )
+
     extra_generation_kwargs = dict(generation_params or {})
     for blocked_key in {
         "max_new_tokens",
@@ -310,7 +321,13 @@ def _generate_predictions(
             continue
 
         task_slug = str(task_name or "").lower()
-        forbidden_ids = base_forbidden_ids if task_slug in TEXTUAL_OUTPUT_TASKS else ()
+        textual_task = task_slug in TEXTUAL_OUTPUT_TASKS
+        if textual_task:
+            forbidden_ids = tuple(
+                dict.fromkeys(base_forbidden_ids + rdf_prefix_token_ids)
+            )
+        else:
+            forbidden_ids = ()
 
         generation_kwargs = dict(base_generation_kwargs)
         enforce_override = generation_kwargs.pop("enforce_rdf_grammar", None)
@@ -330,6 +347,8 @@ def _generate_predictions(
             return_ids=True,
             forbidden_token_ids=forbidden_ids,
             enforce_rdf_grammar=enforce_rdf,
+            strip_start_token=textual_task,
+            skip_special_tokens=textual_task,
             **generation_kwargs,
         )
         raw_predictions.append(pred)
