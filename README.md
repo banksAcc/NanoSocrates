@@ -72,31 +72,8 @@ pip install -r requirements.txt
    ```bash
    python -m scripts.build_dataset --config configs/data/build.yaml --dbp data/raw/dbpedia_triples.jsonl --wiki data/raw/wikipedia_intro.jsonl --outdir data/processed --emit_tasks
    ```
-   I dataset generati includono solo i film in inglese: lo script filtra le triple
-   DBpedia verificando che ogni film abbia almeno un `dbo:language` presente nella
-   lista `allowed_languages` del file `configs/data/build.yaml`. Per includere altre
-   lingue aggiungi gli URI DBpedia desiderati (es. `dbr:Italian_language`) a quella
-   lista e rigenera il dataset.
-
-   #### Rigenera gli split con `split_by_film.py`
-
-   Il comando precedente salva sempre `data/interim/pairs.all.jsonl` prima di creare
-   gli split. Se vuoi rifare la suddivisione **senza** ricostruire l'intero dataset
-   (ad esempio dopo aver filtrato manualmente `pairs.all.jsonl` oppure partendo da
-   un file generato da un'altra pipeline) usa lo script standalone:
-
-   ```bash
-   python -m scripts.split_by_film \
-       --pairs data/interim/pairs.all.jsonl \
-       --outdir data/interim \
-       --seed 13 \
-       --ratios 0.8,0.1,0.1
-   ```
-
-   Lo script crea `pairs.train/val/test.jsonl` nell'`outdir` indicato, controllando
-   che nessun film finisca in più split (in tal caso l'esecuzione fallisce con un
-   messaggio esplicito). Puoi eseguirlo anche **prima** di `build_dataset.py` per
-   preparare gli split che poi lo script principale riutilizzerà.
+   Il dataset risultante include tutti i film con testo sufficiente a superare i
+   controlli di qualità (numero minimo di triple, deduplica, caps per predicato).
 3. **Addestra (o aggiorna) il tokenizer**
    ```bash
    python -m scripts.train_tokenizer --config configs/tokenizer/bpe_default.yaml
@@ -316,7 +293,7 @@ Vedi esempi in `configs/` per:
 
 ### Architettura del modello
 
-`TinySeq2Seq` ora implementa esclusivamente un encoder–decoder ispirato a T5:
+`TinySeq2Seq` implementa un encoder–decoder ispirato a T5:
 
 - attenzioni multi-head con bias posizionali relativi a bucket;
 - LayerNorm in configurazione pre-attention e feed-forward GeGLU;
@@ -350,7 +327,7 @@ Token speciali: `<SOT> <EOT> <SUBJ> <PRED> <OBJ> <RDF2Text> <Text2RDF> <CONTINUE
 
 ## 5) Tokenizer (Step 4)
 
-Addestra **BPE 24k** su (testo + RDF linearizzato) con i token speciali. Artefatti in `data/vocab/`.
+Addestra **BPE** su (testo + RDF linearizzato) con i token speciali. Artefatti in `data/vocab/`.
 
 ---
 
@@ -396,8 +373,7 @@ segnaposto `<<override-me>>`: indica agli script di passare il path corretto via
 Per eseguire una valutazione completa sul mix multitask T5:
 
 ```bash
-python -m src.run evaluate --cfg configs/eval/multitask_default.yaml \
-    --override checkpoint=checkpoints/multitask_default/best.pt --output reports/eval.json
+python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override checkpoint=checkpoints/multitask_default/best.pt --output reports/eval.json
 ```
 
 Il comando genera un report strutturato (stampato a terminale e salvato su disco)
