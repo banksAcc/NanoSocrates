@@ -22,9 +22,9 @@ datasets:
 
 # modello
 use_rope: false
-use_mla: true
+use_mla: false
 interleave_ratio: 0.0
-architecture: "vanilla"
+architecture: "t5"
 d_model: 256
 nhead: 4
 enc_layers: 2

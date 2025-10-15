@@ -121,11 +121,7 @@ pip install -r requirements.txt
    il flag `--print-batch`:
 
    ```bash
-   python -m src.run overfit \
-       --cfg configs/train/multitask_default.yaml \
-       --toy \
-       --print-batch \
-       --print-batch-limit 2
+   python -m src.run overfit --cfg configs/train/multitask_default.yaml --toy --print-batch --print-batch-limit 2
    ```
 
    Il comando stampa sul logger `INFO` un riepilogo del primo batch emesso dal
@@ -191,8 +187,7 @@ avviare esperimenti di training. Per usarlo:
    automaticamente nel `PYTHONPATH`:
 
    ```bash
-   python -m scripts.inspect_mlm_batch --tokenizer data/vocab/bpe.json \
-       --text "Ciao mondo" --batch-size 2 --max-length 64
+   python -m scripts.inspect_mlm_batch --tokenizer data/vocab/bpe.json --text "Ciao mondo" --batch-size 2 --max-length 64
    ```
 
    Parametri utili:

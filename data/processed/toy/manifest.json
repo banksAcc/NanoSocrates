@@ -1,19 +1,9 @@
 {
-  "total_films": 20,
+  "total_films": 10,
   "per_split": {
     "train": [
       "dbr:America_Abbayi",
-      "dbr:Beloved_(1965_film)",
-      "dbr:Café_Paradis",
-      "dbr:Calendar_Girls_(2015_film)",
-      "dbr:Callaway_Went_Thataway",
-      "dbr:Captain_America:_Civil_War",
-      "dbr:Captain_Horatio_Hornblower",
-      "dbr:Cargo_(2009_film)",
-      "dbr:Carmen_(2003_film)",
-      "dbr:Caro_diario",
-      "dbr:Prairie_Rustlers",
-      "dbr:Prehistoric_Women_(1967_film)"
+      "dbr:Captain_America:_Civil_War"
     ],
     "val": [
       "dbr:Amore_amaro",
@@ -30,22 +20,22 @@
   },
   "tasks": {
     "text2rdf": {
-      "train": 12,
+      "train": 2,
       "val": 4,
       "test": 4
     },
     "rdf2text": {
-      "train": 12,
+      "train": 2,
       "val": 4,
       "test": 4
     },
     "rdfcomp1": {
-      "train": 12,
+      "train": 2,
       "val": 4,
       "test": 4
     },
     "rdfcomp2": {
-      "train": 12,
+      "train": 2,
       "val": 4,
       "test": 4
     }

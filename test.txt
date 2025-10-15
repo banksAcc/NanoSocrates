@@ -1,1 +1,6 @@
  python debug_batch.py --batch-size 2 --limit 2
+
+
+python -m scripts.build_toy_subset --pairs data/interim/pairs.all.jsonl --splits data/interim/splits.json --processed-dir data/processed --outdir data/processed/toy --films 10
+
+ python -m src.run overfit  --cfg configs/train/multitask_default.yaml --toy --steps 25 --print-batch --print-batch-limit 2
