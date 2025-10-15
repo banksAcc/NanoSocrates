@@ -397,10 +397,9 @@ def beam_search_decode(
                         )
                 continue
 
-            new_active_sequences.append(new_seq)
-            new_active_scores.append(score)
-            if len(new_active_sequences) == num_beams:
-                break
+            if len(new_active_sequences) < num_beams:
+                new_active_sequences.append(new_seq)
+                new_active_scores.append(score)
 
         active_sequences = new_active_sequences
         if new_active_scores:
