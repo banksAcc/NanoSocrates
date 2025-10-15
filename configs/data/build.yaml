@@ -12,11 +12,6 @@ predicate_caps_override:
 # Config principale DBpedia (usato per l'ordinamento whitelist dei predicati).
 dbpedia_config: configs/data/dbpedia.yaml
 
-# Limita i film ai soli titoli nella lingua indicata.
-# Aggiungi o modifica gli URI DBpedia ammessi se vuoi includere altre lingue.
-allowed_languages:
-  - dbr:English_language
-
 # Lunghezza massima delle sequenze (verifica in build, ma il vero cut avviene in tokenizer/model).
 max_seq_len: 256
 
@@ -29,3 +24,14 @@ shuffle_seed: 13
 # Pulizie/normalizzazioni.
 deduplicate: true
 normalize_prefixes: true
+
+# Filtri sul numero massimo di occorrenze per soggetto/predicato/oggetto.
+# Imposta a null per disattivare.
+max_subject_freq: null
+max_predicate_freq: null
+max_object_freq: null
+
+# Percorsi per audit delle frequenze.
+frequency_summary_path: data/interim/triple_frequency_summary.json
+# Imposta opzionalmente un percorso per il dump completo delle frequenze.
+frequency_dump_path: null

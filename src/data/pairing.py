@@ -8,7 +8,7 @@ Output: {"film", "text", "triples": [(film, p, o), ...]}
 
 from __future__ import annotations
 from collections import defaultdict
-from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 from ..utils.logging import get_logger
 
 logger = get_logger("pairing")
@@ -17,7 +17,6 @@ def pair_and_filter(
     triples_stream: Iterable[dict],
     texts_stream: Iterable[dict],
     min_triples: int = 3,
-    allowed_languages: Optional[Iterable[str]] = None,
     predicate_object_cap: Optional[int] = None,
     predicate_caps_override: Optional[Dict[str, int]] = None,
     predicate_priority: Optional[Iterable[str]] = None,
@@ -25,15 +24,12 @@ def pair_and_filter(
     """Join triple and text streams keeping only well-formed film records.
 
     The returned triples always expose the film as the explicit subject,
-    regardless of the original triple direction provided upstream. When
-    ``allowed_languages`` is provided, only films with at least one
-    ``dbo:language`` triple matching the allowed URIs are kept. When a
+    regardless of the original triple direction provided upstream. When a
     ``predicate_object_cap`` (and optional overrides) is provided, triples are
     grouped by predicate and truncated preserving the priority order supplied
     via ``predicate_priority``.
     """
     triples_by_film: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
-    languages_by_film: Dict[str, Set[str]] = defaultdict(set)
     predicate_caps: Dict[str, int] = {
         key: int(value) for key, value in (predicate_caps_override or {}).items()
     }
@@ -41,12 +37,6 @@ def pair_and_filter(
     if predicate_priority is not None:
         priority_index = {predicate: idx for idx, predicate in enumerate(predicate_priority)}
     discarded_by_predicate: Dict[str, int] = defaultdict(int)
-    if allowed_languages is None:
-        allowed_languages_set: Optional[Set[str]] = None
-    elif isinstance(allowed_languages, str):
-        allowed_languages_set = {allowed_languages}
-    else:
-        allowed_languages_set = set(allowed_languages)
     for r in triples_stream:
         film_id = r["film"]
         triple = (film_id, r["p"], r["o"])
@@ -54,26 +44,18 @@ def pair_and_filter(
         # edges are conceptually rewritten to keep a consistent (film, predicate,
         # object) structure for downstream consumers.
         triples_by_film[film_id].append(triple)
-        if r.get("p") == "dbo:language" and r.get("o"):
-            languages_by_film[film_id].add(r["o"])
 
     texts_by_film: Dict[str, str] = {}
     for r in texts_stream:
         if r.get("text"):
             texts_by_film[r["film"]] = r["text"].strip()
 
-    kept, dropped_no_text, dropped_few_triples, dropped_language = 0, 0, 0, 0
+    kept, dropped_no_text, dropped_few_triples = 0, 0, 0
     for film, triples in triples_by_film.items():
         text = texts_by_film.get(film, "")
         if not text:
             dropped_no_text += 1
             continue
-
-        if allowed_languages_set is not None:
-            languages = languages_by_film.get(film, set())
-            if not languages.intersection(allowed_languages_set):
-                dropped_language += 1
-                continue
 
         # Remove duplicates but preserve the original ordering so downstream
         # tasks can still align triples with textual references.
@@ -114,11 +96,10 @@ def pair_and_filter(
         yield {"film": film, "text": text, "triples": capped_triples}
 
     logger.info(
-        "Pairing: kept=%d, no_text=%d, few_triples=%d, disallowed_language=%d",
+        "Pairing: kept=%d, no_text=%d, few_triples=%d",
         kept,
         dropped_no_text,
         dropped_few_triples,
-        dropped_language,
     )
     if discarded_by_predicate:
         for predicate, count in sorted(discarded_by_predicate.items(), key=lambda item: item[0]):

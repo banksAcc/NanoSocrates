@@ -71,11 +71,8 @@ pip install -r requirements.txt
    ```bash
    python -m scripts.build_dataset --config configs/data/build.yaml --dbp data/raw/dbpedia_triples.jsonl --wiki data/raw/wikipedia_intro.jsonl --outdir data/processed --emit_tasks
    ```
-   I dataset generati includono solo i film in inglese: lo script filtra le triple
-   DBpedia verificando che ogni film abbia almeno un `dbo:language` presente nella
-   lista `allowed_languages` del file `configs/data/build.yaml`. Per includere altre
-   lingue aggiungi gli URI DBpedia desiderati (es. `dbr:Italian_language`) a quella
-   lista e rigenera il dataset.
+   Il dataset risultante include tutti i film con testo sufficiente a superare i
+   controlli di qualità (numero minimo di triple, deduplica, caps per predicato).
 3. **Addestra (o aggiorna) il tokenizer**
    ```bash
    python -m scripts.train_tokenizer --config configs/tokenizer/bpe_default.yaml
