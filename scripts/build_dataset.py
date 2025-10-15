@@ -10,6 +10,7 @@ import random
 from collections import Counter, defaultdict
 from typing import Iterable, List
 
+from scripts.split_by_film import split_by_film
 from src.data.builders import build_comp1, build_comp2, build_rdf2text, build_text2rdf
 from src.data.pairing import pair_and_filter
 from src.utils.config import load_yaml
