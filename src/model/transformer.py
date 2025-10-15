@@ -132,7 +132,7 @@ class TinySeq2Seq(nn.Module):
             A dictionary containing:
             - "logits": The model's output logits. Shape: (batch_size, tgt_seq_len, vocab_size)
             - "loss": The computed cross-entropy loss, if `labels` are provided.
-            - "metrics": A dictionary containing accuracy when labels are provided.
+            - "metrics": A dictionary containing the exact-match rate when labels are provided.
         """
         device = input_ids.device
         
