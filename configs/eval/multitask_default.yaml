@@ -36,5 +36,5 @@ wandb:
 
 preview:
   limit: 5          # massimo numero di esempi mostrati per ciascun task
-  per_task: true    # se false applica il limite sull'intero dataset
+  per_task: false  # se false applica il limite sull'intero dataset
   output_dir: "reports/previews"  # (facoltativo) salva i record su disco
