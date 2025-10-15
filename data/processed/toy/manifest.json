@@ -1,0 +1,44 @@
+{
+  "total_films": 10,
+  "per_split": {
+    "train": [
+      "dbr:America_Brown_(film)",
+      "dbr:Casino_Royale_(1967_film)"
+    ],
+    "val": [
+      "dbr:Be_Vaghte_Talagh",
+      "dbr:Calamity_Jane_and_Sam_Bass",
+      "dbr:Caprichosa_y_millonaria",
+      "dbr:Caroline_at_Midnight"
+    ],
+    "test": [
+      "dbr:Ameerin_Aadhi-Bhagavan",
+      "dbr:Cairo_Declaration_(film)",
+      "dbr:Cars_3",
+      "dbr:Premigala_Saval"
+    ]
+  },
+  "tasks": {
+    "text2rdf": {
+      "train": 2,
+      "val": 4,
+      "test": 4
+    },
+    "rdf2text": {
+      "train": 2,
+      "val": 4,
+      "test": 4
+    },
+    "rdfcomp1": {
+      "train": 2,
+      "val": 4,
+      "test": 4
+    },
+    "rdfcomp2": {
+      "train": 2,
+      "val": 4,
+      "test": 4
+    }
+  },
+  "source_processed_dir": "data\\processed"
+}
