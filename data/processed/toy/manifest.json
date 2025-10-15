@@ -2,20 +2,20 @@
   "total_films": 10,
   "per_split": {
     "train": [
-      "dbr:America_Abbayi",
-      "dbr:Captain_America:_Civil_War"
+      "dbr:Ameer_Aadmi_Gharib_Aadmi",
+      "dbr:Casino_Royale_(1967_film)"
     ],
     "val": [
-      "dbr:Amore_amaro",
-      "dbr:Cado_dalle_nubi",
-      "dbr:Captain_Eddie",
-      "dbr:Captain_Newman,_M.D."
+      "dbr:Before_I_Wake_(1955_film)",
+      "dbr:Call_of_the_Canyon",
+      "dbr:Camino_(2008_film)",
+      "dbr:Carry_On_Cabby"
     ],
     "test": [
-      "dbr:Amigos_para_La_Aventura",
-      "dbr:Captain_America:_The_Winter_Soldier",
-      "dbr:Carnal_Knowledge_(film)",
-      "dbr:Putham_Pudhu_Kaalai"
+      "dbr:9",
+      "dbr:Camp_Hell",
+      "dbr:Captain_Newman,_M.D.",
+      "dbr:Pranam_Khareedu"
     ]
   },
   "tasks": {

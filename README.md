@@ -21,7 +21,7 @@ nanosocrates/
 │  ├─ tokenizer/
 │  │  └─ bpe_default.yaml        # addestramento tokenizer + token speciali
 │  └─ train/
-│     ├─ baseline.yaml           # preset T5 più ampio
+│     ├─ multitask_default.yaml           # preset T5 più ampio
 │     └─ multitask_default.yaml  # preset multitask T5 3:3:2:2
 ├─ data/                         # directory popolata dagli script (raw/interim/processed/vocab)
 ├─ scripts/
@@ -222,7 +222,7 @@ Vedi esempi in `configs/` per:
 - `data/build.yaml` — split, maxlen, filtri qualità
 - `data/toy.yaml` — percorsi del sottoinsieme 20-film per debug rapido
 - `tokenizer/bpe_default.yaml` — vocab e token speciali
-- `train/baseline.yaml` — modello, trainer, mixing task
+- `train/multitask_default.yaml` — modello, trainer, mixing task
 - `decode/constrained.yaml` — vincoli leggeri per RDF
 - blocco `wandb:` — parametri di logging (project, entity, run_name, mode, tags, watch)
 
@@ -272,7 +272,7 @@ Il modello di riferimento è `TinySeq2Seq` con **3 encoder layer + 3 decoder lay
 (`d_model=384`, `nhead=6`, `ff_dim=1536`, dropout `0.1`). Il preset di default
 (`configs/train/multitask_default.yaml`) addestra un T5 compatto sui quattro task
 Text2RDF/RDF2Text/RDFComp1/RDFComp2 con mixing **3:3:2:2**. Il preset
-`baseline.yaml` fornisce un'alternativa più ampia mantenendo lo stesso schema di
+`multitask_default.yaml` fornisce un'alternativa più ampia mantenendo lo stesso schema di
 training. Gli script di sanity (`src.run overfit` o `scripts/sanity_overfit.py`)
 permettono di validare rapidamente la pipeline.
 
@@ -341,7 +341,7 @@ per salvare lo stesso payload su disco.
 
 ## 9) Ablation (Step 9) — breve e mirata
 
-- **Dimensione**: confronta preset compatti (`multitask_default.yaml`) e ampi (`baseline.yaml`).
+- **Dimensione**: confronta preset compatti (`multitask_default.yaml`).
 - **Profondità**: varia `enc_layers`/`dec_layers` mantenendo fisso il mixing multitask **3:3:2:2**.
   Metriche: ROUGE-L, F1 triple, Accuracy Comp-1, costo/epoch.
 

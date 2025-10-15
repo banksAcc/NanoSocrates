@@ -1,2 +1,0 @@
-{"input": "<SOT> <SUBJ> dbr:FilmA <PRED> dbo:genre <OBJ> dbr:Comedy <EOT> <SOT> <SUBJ> dbr:FilmA <PRED> dbo:genre <OBJ> dbr:Drama <EOT>", "target": "A comedy drama.", "task": "rdf2text", "film": "dbr:FilmA"}
-{"input": "<SOT> <SUBJ> dbr:FilmB <PRED> dbo:runtime <OBJ> 5400.0 <EOT>", "target": "Runtime is 90 minutes.", "task": "rdf2text", "film": "dbr:FilmB"}

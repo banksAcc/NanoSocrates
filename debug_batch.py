@@ -132,7 +132,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ispeziona un singolo batch del DataLoader")
     parser.add_argument(
         "--config",
-        default="configs/train/baseline.yaml",
+        default="configs/train/multitask_default.yaml",
         help="Config di training da cui ricavare tokenizer e dataset",
     )
     parser.add_argument("--split", choices=["train", "validation"], default="train")
