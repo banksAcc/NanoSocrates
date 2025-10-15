@@ -23,7 +23,7 @@ batch_size: 500
 timeout_s: 20
 
 # Direzione: "out" (film come soggetto) o "both" (aggiunge entranti).
-direction: "out"
+direction: "both"
 
 # Lingua preferita per gli abstract (fallback), se usati.
 lang: "en"
