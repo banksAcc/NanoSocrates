@@ -117,9 +117,40 @@ pip install -r requirements.txt
    ```bash
    python -m scripts.sanity_overfit --cfg configs/train/multitask_default.yaml --toy
    ```
-3. Vedrai i log INFO con le metriche di validazione ad ogni epoca e la perdita nel
+3. (Opzionale) Per ispezionare il batch che viene ripetuto durante l'overfit usa
+   il flag `--print-batch`:
+
+   ```bash
+   python -m src.run overfit \
+       --cfg configs/train/multitask_default.yaml \
+       --toy \
+       --print-batch \
+       --print-batch-limit 2
+   ```
+
+   Il comando stampa sul logger `INFO` un riepilogo del primo batch emesso dal
+   `DataLoader`: numero di token non di padding, testo decodificato, eventuali
+   campi grezzi (`raw_input`/`raw_target`) e il task associato a ciascun esempio.
+   Il limite di esempi mostrati è controllato da `--print-batch-limit` (default: 3).
+
+4. Vedrai i log INFO con le metriche di validazione ad ogni epoca e la perdita nel
    postfix della progress bar. Verifica che la loss scenda rapidamente verso ~0:
    questo conferma che tokenizer, dataloader, loop di training e logging sono collegati.
+
+#### 2.4.1 Interpretazione della loss nel sanity check
+
+- **Prime epoche**: è normale partire da perdite molto alte (anche >150) perché il
+  modello sta iniziando da pesi random e il batch toy è estremamente eterogeneo.
+- **Andamento atteso**: con `--override dropout=0.0` e AMP attivo, il modello
+  memorizza il batch in poche decine di step. In pratica vedrai la loss scendere
+  sotto 50 dopo ~5–6 epoche e convergere verso <1 (fino a ~0.05) entro 20–30 epoche.
+- **Se la loss resta >10 per decine di epoche**: verifica che `--toy` punti ai file
+  ridotti corretti, che il tokenizer sia lo stesso usato per generarli e, in caso di
+  dubbi, usa `--print-batch` per stampare gli ID e i testi del mini-dataset (cerca
+  valori `-100` nelle labels solo nelle posizioni di padding).
+- **Plateau sopra 1**: di solito indica token fuori vocabolario o batch pieni di
+  padding; in quel caso ricontrolla il dataset di input e considera di rigenerare il
+  toy set.
 
 ### 2.5 Tutorial — valutazione con Weights & Biases
 
