@@ -7,7 +7,6 @@ import json
 import random
 from pathlib import Path
 from typing import Iterable, List, Optional
-
 import torch
 from transformers import AutoTokenizer, PreTrainedTokenizerBase, PreTrainedTokenizerFast
 
@@ -57,8 +56,7 @@ def _load_toy_texts(
         examples = examples[:sample_size]
 
     return examples
-
-
+  
 def _load_tokenizer(identifier: str) -> PreTrainedTokenizerBase:
     path = Path(identifier)
     if path.exists():
