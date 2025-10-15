@@ -51,7 +51,7 @@ def sequence_loss_with_accuracy(
     if compute_metrics:
         with torch.no_grad():
             predictions = logits_for_loss.argmax(dim=-1)
-            valid_mask = target != ignore_index
+            valid_mask = target_for_loss != ignore_index
             if valid_mask.any():
                 comparison = (predictions == target) | ~valid_mask
                 per_example = comparison.all(dim=1)
