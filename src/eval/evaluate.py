@@ -35,6 +35,7 @@ STRUCTURAL_DECODE_TOKENS: tuple[str, ...] = (
 )
 
 TEXTUAL_OUTPUT_TASKS: frozenset[str] = frozenset({"rdf2text", "rdfcomp1"})
+RDF_GRAMMAR_TASKS: frozenset[str] = frozenset({"text2rdf", "rdfcomp2"})
 
 
 def _select_device(want: Optional[str]) -> str:
@@ -271,6 +272,8 @@ def _generate_predictions(
     }:
         extra_generation_kwargs.pop(blocked_key, None)
 
+    base_generation_kwargs = dict(extra_generation_kwargs)
+
     for ex in dataset.items:
         source: str = ""
         target: str = ""
@@ -309,6 +312,13 @@ def _generate_predictions(
         task_slug = str(task_name or "").lower()
         forbidden_ids = base_forbidden_ids if task_slug in TEXTUAL_OUTPUT_TASKS else ()
 
+        generation_kwargs = dict(base_generation_kwargs)
+        enforce_override = generation_kwargs.pop("enforce_rdf_grammar", None)
+        if enforce_override is None:
+            enforce_rdf = task_slug in RDF_GRAMMAR_TASKS if task_slug else False
+        else:
+            enforce_rdf = _to_bool(enforce_override, False)
+
         pred, token_ids = decode_to_text(
             model,
             tokenizer,
@@ -319,7 +329,9 @@ def _generate_predictions(
             debug=debug_generation,
             return_ids=True,
             forbidden_token_ids=forbidden_ids,
-            **extra_generation_kwargs,
+            enforce_rdf_grammar=enforce_rdf,
+            strip_start_token=not enforce_rdf,
+            **generation_kwargs,
         )
         raw_predictions.append(pred)
         raw_references.append(target)

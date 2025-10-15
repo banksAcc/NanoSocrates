@@ -18,6 +18,8 @@ TASK_MARKERS = {
     "rdfcomp1": "<MASK>",
 }
 
+STRUCTURED_RDF_TASKS = frozenset({"text2rdf", "rdfcomp2"})
+
 
 def prepare_input(text: str, task: str | None) -> str:
     """Attach the task marker to *text* when necessary for decoding."""
@@ -41,6 +43,26 @@ def main() -> None:
     ap.add_argument("--task", choices=list(TASK_MARKERS.keys()))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--max-new-tokens", type=int, default=128)
+    ap.add_argument("--use-beam-search", action="store_true")
+    ap.add_argument("--beam-size", type=int, default=4)
+    ap.add_argument("--length-penalty", type=float, default=1.0)
+    ap.add_argument("--no-repeat-ngram-size", type=int, default=3)
+    ap.add_argument("--repetition-penalty", type=float, default=1.1)
+    ap.add_argument(
+        "--no-early-stopping",
+        action="store_true",
+        help="Disabilita l'early stopping durante il beam search",
+    )
+    ap.add_argument(
+        "--enforce-rdf-grammar",
+        action="store_true",
+        help="Forza il vincolo grammaticale RDF anche per task non strutturati",
+    )
+    ap.add_argument(
+        "--disable-rdf-grammar",
+        action="store_true",
+        help="Disattiva il vincolo grammaticale RDF anche per task strutturati",
+    )
     ap.add_argument("--model-override", nargs="*", default=[])
     args = ap.parse_args()
 
@@ -58,12 +80,26 @@ def main() -> None:
     )
 
     prepared = prepare_input(args.input, args.task)
+    enforce_rdf = (args.task in STRUCTURED_RDF_TASKS) if args.task else False
+    if args.enforce_rdf_grammar:
+        enforce_rdf = True
+    if args.disable_rdf_grammar:
+        enforce_rdf = False
+
     output = decode_to_text(
         model,
         tokenizer,
         prepared,
         max_new_tokens=args.max_new_tokens,
         device=device,
+        use_beam_search=args.use_beam_search,
+        beam_size=args.beam_size,
+        length_penalty=args.length_penalty,
+        no_repeat_ngram_size=args.no_repeat_ngram_size,
+        repetition_penalty=args.repetition_penalty,
+        early_stopping=not args.no_early_stopping,
+        enforce_rdf_grammar=enforce_rdf,
+        strip_start_token=not enforce_rdf,
     )
     print(output)
 

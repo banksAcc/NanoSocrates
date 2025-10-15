@@ -43,6 +43,8 @@ TASK_MARKERS = {
     "rdfcomp1": "<MASK>",
 }
 
+STRUCTURED_RDF_TASKS = frozenset({"text2rdf", "rdfcomp2"})
+
 
 def _decode_for_logging(tokenizer: Tokenizer, sequence: Any, pad_value: int | None) -> str:
     """Decode *sequence* removing tokens equal to *pad_value* when provided."""
@@ -495,12 +497,26 @@ def cmd_predict(args: argparse.Namespace) -> None:
     )
 
     prepared_input = _prepare_predict_input(args.input, args.task)
+    enforce_rdf = (args.task in STRUCTURED_RDF_TASKS) if args.task else False
+    if getattr(args, "enforce_rdf_grammar", False):
+        enforce_rdf = True
+    if getattr(args, "disable_rdf_grammar", False):
+        enforce_rdf = False
+
     output = decode_to_text(
         model,
         tokenizer,
         prepared_input,
         max_new_tokens=args.max_new_tokens,
         device=device,
+        use_beam_search=args.use_beam_search,
+        beam_size=args.beam_size,
+        length_penalty=args.length_penalty,
+        no_repeat_ngram_size=args.no_repeat_ngram_size,
+        repetition_penalty=args.repetition_penalty,
+        early_stopping=not args.no_early_stopping,
+        enforce_rdf_grammar=enforce_rdf,
+        strip_start_token=not enforce_rdf,
     )
     print(output)
 
@@ -544,6 +560,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_predict.add_argument("--task", choices=sorted(TASK_MARKERS))
     p_predict.add_argument("--device", default="cuda")
     p_predict.add_argument("--max-new-tokens", type=int, default=128)
+    p_predict.add_argument("--use-beam-search", action="store_true")
+    p_predict.add_argument("--beam-size", type=int, default=4)
+    p_predict.add_argument("--length-penalty", type=float, default=1.0)
+    p_predict.add_argument("--no-repeat-ngram-size", type=int, default=3)
+    p_predict.add_argument("--repetition-penalty", type=float, default=1.1)
+    p_predict.add_argument(
+        "--no-early-stopping",
+        action="store_true",
+        help="Disabilita l'early stopping durante il beam search",
+    )
+    p_predict.add_argument(
+        "--enforce-rdf-grammar",
+        action="store_true",
+        help="Forza il vincolo grammaticale RDF anche per task non strutturati",
+    )
+    p_predict.add_argument(
+        "--disable-rdf-grammar",
+        action="store_true",
+        help="Disattiva il vincolo grammaticale RDF anche per task strutturati",
+    )
     p_predict.add_argument(
         "--model-override",
         nargs="*",
