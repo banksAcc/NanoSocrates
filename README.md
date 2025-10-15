@@ -117,7 +117,23 @@ pip install -r requirements.txt
    ```bash
    python -m scripts.sanity_overfit --cfg configs/train/multitask_default.yaml --toy
    ```
-3. Vedrai i log INFO con le metriche di validazione ad ogni epoca e la perdita nel
+3. (Opzionale) Per ispezionare il batch che viene ripetuto durante l'overfit usa
+   il flag `--print-batch`:
+
+   ```bash
+   python -m src.run overfit \
+       --cfg configs/train/multitask_default.yaml \
+       --toy \
+       --print-batch \
+       --print-batch-limit 2
+   ```
+
+   Il comando stampa sul logger `INFO` un riepilogo del primo batch emesso dal
+   `DataLoader`: numero di token non di padding, testo decodificato, eventuali
+   campi grezzi (`raw_input`/`raw_target`) e il task associato a ciascun esempio.
+   Il limite di esempi mostrati è controllato da `--print-batch-limit` (default: 3).
+
+4. Vedrai i log INFO con le metriche di validazione ad ogni epoca e la perdita nel
    postfix della progress bar. Verifica che la loss scenda rapidamente verso ~0:
    questo conferma che tokenizer, dataloader, loop di training e logging sono collegati.
 
