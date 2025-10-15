@@ -19,6 +19,33 @@ from src.utils.logging import get_logger
 
 LOGGER = get_logger("build_dataset")
 
+TRIPLE_ENTITY_INDEX = {"subject": 0, "predicate": 1, "object": 2}
+
+
+def split_by_film(pairs: List[dict], split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1), seed: int = 13):
+    """Split the dataset by film id to avoid leaking a title across different splits."""
+    films = [p["film"] for p in pairs]
+    rng = random.Random(seed)
+    rng.shuffle(films)
+    n = len(films)
+    n_train = int(n * split_ratios[0])
+    n_val = int(n * split_ratios[1])
+    train_ids = set(films[:n_train])
+    val_ids = set(films[n_train : n_train + n_val])
+    test_ids = set(films[n_train + n_val :])
+
+    out = {"train": [], "val": [], "test": []}
+    for example in pairs:
+        film_id = example["film"]
+        if film_id in train_ids:
+            out["train"].append(example)
+        elif film_id in val_ids:
+            out["val"].append(example)
+        else:
+            out["test"].append(example)
+    return out
+
+
 def _add_n_triples(example: dict) -> dict:
     """Return a shallow copy of *example* with an explicit ``n_triples`` field."""
     enriched = dict(example)
@@ -74,7 +101,6 @@ def main() -> None:
             triples_stream,
             texts_stream,
             min_triples=int(cfg.get("min_triples_per_film", 3)),
-            allowed_languages=cfg.get("allowed_languages"),
             predicate_object_cap=predicate_object_cap,
             predicate_caps_override=predicate_caps_override,
             predicate_priority=predicate_priority,
@@ -90,11 +116,12 @@ def main() -> None:
     subject_counter: Counter[str] = Counter()
     predicate_counter: Counter[str] = Counter()
     object_counter: Counter[str] = Counter()
+
     for pair in pairs:
-        for triple in pair.get("triples", []):
-            subject_counter[triple["subject"]] += 1
-            predicate_counter[triple["predicate"]] += 1
-            object_counter[triple["object"]] += 1
+        for subject, predicate, obj in pair.get("triples", []):
+            subject_counter[subject] += 1
+            predicate_counter[predicate] += 1
+            object_counter[obj] += 1
 
     def _summarise(counter: Counter[str], top_k: int = 20) -> dict:
         return {
@@ -170,7 +197,8 @@ def main() -> None:
             for triple_id in keep_ids:
                 pair_idx, triple_idx = triple_refs[triple_id]
                 triple = pairs[pair_idx]["triples"][triple_idx]
-                entity_occurrences[triple[entity]].append(triple_id)
+                value = triple[TRIPLE_ENTITY_INDEX[entity]]
+                entity_occurrences[value].append(triple_id)
 
             retained_for_entity: set[int] = set()
             removed_for_entity = 0
