@@ -13,9 +13,6 @@ generation_params:
   min_new_tokens: 1
   debug_generation: true
 
-# abilita la valutazione delle maschere quando il checkpoint le supporta
-enable_entity_spans: true
-
 # path split per task
 tasks:
   text2rdf:

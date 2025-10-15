@@ -64,7 +64,5 @@ class MaskedLMTaskModule(nn.Module):
                     predictions = outputs.logits.argmax(dim=-1)
                     correct = ((predictions == labels) & mask).sum().item()
                     total = mask.sum().item()
-                    result["metrics"] = {
-                        "mask_accuracy": float(correct / total) if total else 0.0
-                    }
+                    result["metrics"] = {"accuracy": float(correct / total) if total else 0.0}
         return result

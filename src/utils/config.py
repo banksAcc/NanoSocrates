@@ -13,11 +13,6 @@ CHECKPOINT_ALIASES = {
     # Multitask T5 con mixing standard.
     "multitask_default": "checkpoints/multitask_default/best.pt",
     "mix": "checkpoints/multitask_default/best.pt",
-    # Encoder-decoder vanilla con RoPE abilitato.
-    "rope_on": "checkpoints/rope_on/best.pt",
-    "rope": "checkpoints/rope_on/best.pt",
-    # Alias storico per il preset vanilla senza RoPE.
-    "baseline": "checkpoints/baseline/best.pt",
 }
 """Mappa alias→path per i checkpoint salvati più comuni."""
 
