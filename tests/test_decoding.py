@@ -114,12 +114,37 @@ def test_rdf_grammar_masks_invalid_transitions():
         device="cpu",
         return_ids=True,
         use_beam_search=False,
+        enforce_rdf_grammar=True,
     )
     tokens = _decode_ids(tok, ids)
 
     assert tokens[0] == "<SUBJ>"
     triples = parse_rdf(" ".join(["<SOT>"] + tokens))
     assert triples == [("A", "B", "C")]
+
+
+def test_default_decoding_does_not_force_rdf_structure_for_textual_tasks():
+    vocab = ["<pad>", "<SOT>", "<EOT>", "<SUBJ>", "<PRED>", "<OBJ>", "hello"]
+    tok = DummyTokWrapper(vocab)
+    transitions = {
+        (1,): {6: 5.0, 3: 4.0},  # Prefer "hello" over <SUBJ>
+        (1, 6): {2: 5.0},
+    }
+    model = DummyModel(len(vocab), transitions)
+
+    text, ids = decode_to_text(
+        model,
+        tok,
+        "",
+        max_new_tokens=5,
+        device="cpu",
+        return_ids=True,
+        use_beam_search=False,
+    )
+
+    tokens = _decode_ids(tok, ids)
+    assert tokens[0] == "hello"
+    assert text.strip().startswith("hello")
 
 
 def test_beam_search_avoids_repeated_trigrams_and_preserves_rdf_structure():
@@ -155,6 +180,7 @@ def test_beam_search_avoids_repeated_trigrams_and_preserves_rdf_structure():
         device="cpu",
         return_ids=True,
         use_beam_search=True,
+        enforce_rdf_grammar=True,
     )
     tokens = _decode_ids(tok, ids)
 

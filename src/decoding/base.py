@@ -527,7 +527,7 @@ def decode_to_text(model, tok, input_text: str, **kwargs) -> str:
     early_stopping = bool(kwargs.pop("early_stopping", True))
     no_repeat_ngram_size = int(kwargs.pop("no_repeat_ngram_size", 3))
     repetition_penalty = float(kwargs.pop("repetition_penalty", 1.1))
-    enforce_rdf_grammar = bool(kwargs.pop("enforce_rdf_grammar", True))
+    enforce_rdf_grammar = bool(kwargs.pop("enforce_rdf_grammar", False))
     logits_processors: list[
         Callable[[torch.LongTensor, torch.Tensor], torch.Tensor]
     ] = list(kwargs.pop("logits_processors", ()))

@@ -95,6 +95,10 @@ pip install -r requirements.txt
      quelli presenti in `configs/eval/multitask_default.yaml` abilitano di default un
      beam search a 4 ipotesi con `length_penalty=1.0`, `no_repeat_ngram_size=3`,
      `repetition_penalty=1.1` ed `early_stopping`.
+   - Il vincolo sintattico sulla grammatica RDF (`enforce_rdf_grammar`) resta
+     disattivato di default e viene abilitato automaticamente solo durante la
+     valutazione dei task strutturati (`text2rdf`, `rdfcomp2`). Se necessario è
+     possibile forzarlo da CLI o nel blocco `generation_params`.
 
 #### 2.2.1 Controllare il decoding dalla CLI
 
@@ -112,11 +116,14 @@ python -m src.run predict \
     --length-penalty 1.0 \
     --no-repeat-ngram-size 3 \
     --repetition-penalty 1.1
+    # --enforce-rdf-grammar se si desidera forzare il vincolo in altri contesti
 ```
 
 I flag permettono di replicare da terminale le stesse impostazioni del file YAML,
 inclusa la disattivazione dell'`early_stopping` (`--no-early-stopping`) quando si
-vuole esplorare l'intero spazio di ricerca del beam.
+vuole esplorare l'intero spazio di ricerca del beam. Per forzare o disattivare la
+grammatica RDF rispetto alla selezione automatica per task si possono usare,
+rispettivamente, i flag `--enforce-rdf-grammar` e `--disable-rdf-grammar`.
 
 ### 2.3 Tutorial — sottoinsieme toy (20 film)
 
