@@ -184,8 +184,14 @@ avviare esperimenti di training. Per usarlo:
 
    - `--tokenizer`: nome Hugging Face o percorso a una directory/file locale del
      tokenizer.
-   - `--text`: puoi specificarlo più volte per aggiungere esempi inline.
+   - `--text`: stringhe raw che verranno tokenizzate (puoi ripetere il flag per
+     accumulare più esempi).
    - `--text-file`: file di testo (uno per riga) da cui leggere ulteriori esempi.
+   - `--toy`: carica automaticamente frasi di debug da
+     `data/processed/toy/rdf2text.train.jsonl` (campo `target`), comodo per
+     testare il flusso senza preparare input manuali; usa `--toy-path`,
+     `--toy-field` e `--toy-sample` per personalizzare sorgente, colonna e numero
+     di esempi.
    - `--batch-size`, `--max-length`, `--mlm-probability`: replicano i campi del
      dataloader e del collator.
 

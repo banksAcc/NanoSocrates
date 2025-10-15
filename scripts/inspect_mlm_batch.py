@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import random
 from pathlib import Path
-from typing import Iterable, List
-
+from typing import Iterable, List, Optional
 import torch
 from transformers import AutoTokenizer, PreTrainedTokenizerBase, PreTrainedTokenizerFast
 
@@ -24,6 +25,38 @@ def _load_texts(paths: Iterable[Path]) -> List[str]:
     return texts
 
 
+def _load_toy_texts(
+    path: Path,
+    *,
+    field: str,
+    sample_size: Optional[int],
+    seed: Optional[int],
+) -> List[str]:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Il file del toy set '{path}' non esiste. Costruiscilo con scripts.build_toy_subset."
+        )
+
+    examples: List[str] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            record = json.loads(line)
+            value = record.get(field)
+            if isinstance(value, str) and value.strip():
+                examples.append(value.strip())
+
+    if not examples:
+        raise RuntimeError(
+            f"Il file '{path}' non contiene campi testuali validi nella colonna '{field}'."
+        )
+
+    if sample_size is not None:
+        rng = random.Random(seed)
+        rng.shuffle(examples)
+        examples = examples[:sample_size]
+
+    return examples
+  
 def _load_tokenizer(identifier: str) -> PreTrainedTokenizerBase:
     path = Path(identifier)
     if path.exists():
@@ -101,8 +134,20 @@ def inspect_batch(args: argparse.Namespace) -> None:
         text_paths = [Path(path) for path in args.text_file]
         texts.extend(_load_texts(text_paths))
 
+    if args.toy:
+        toy_path = Path(args.toy_path)
+        toy_texts = _load_toy_texts(
+            toy_path,
+            field=args.toy_field,
+            sample_size=args.toy_sample,
+            seed=args.toy_seed,
+        )
+        texts.extend(toy_texts)
+
     if not texts:
-        raise ValueError("Fornisci almeno un testo da tokenizzare tramite --text o --text-file.")
+        raise ValueError(
+            "Fornisci almeno un testo tramite --text, --text-file oppure abilita --toy."
+        )
 
     datamodule = MLMDataModule(
         tokenizer,
@@ -154,6 +199,35 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="File con un esempio per riga da usare come dataset.",
+    )
+    parser.add_argument(
+        "--toy",
+        action="store_true",
+        help=(
+            "Aggiunge automaticamente testi dal toy set JSONL (utile per debug rapido)."
+        ),
+    )
+    parser.add_argument(
+        "--toy-path",
+        default="data/processed/toy/rdf2text.train.jsonl",
+        help="Percorso del file JSONL da cui pescare esempi toy.",
+    )
+    parser.add_argument(
+        "--toy-field",
+        default="target",
+        help="Campo del JSONL da usare come testo (es. target, input, text).",
+    )
+    parser.add_argument(
+        "--toy-sample",
+        type=int,
+        default=None,
+        help="Numero massimo di esempi toy da caricare (default: tutti).",
+    )
+    parser.add_argument(
+        "--toy-seed",
+        type=int,
+        default=13,
+        help="Seed per il campionamento casuale dal toy set.",
     )
     parser.add_argument("--batch-size", type=int, default=4, help="Dimensione del batch da estrarre.")
     parser.add_argument("--max-length", type=int, default=128, help="Massima lunghezza di tokenizzazione.")
