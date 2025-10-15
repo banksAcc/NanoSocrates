@@ -10,6 +10,7 @@ import random
 from collections import Counter, defaultdict
 from typing import Iterable, List
 
+from scripts.split_by_film import split_by_film
 from src.data.builders import build_comp1, build_comp2, build_rdf2text, build_text2rdf
 from src.data.pairing import pair_and_filter
 from src.utils.config import load_yaml
@@ -17,31 +18,6 @@ from src.utils.io import read_jsonl, write_jsonl
 from src.utils.logging import get_logger
 
 LOGGER = get_logger("build_dataset")
-
-
-def split_by_film(pairs: List[dict], split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1), seed: int = 13):
-    """Split the dataset by film id to avoid leaking a title across different splits."""
-    films = [p["film"] for p in pairs]
-    rng = random.Random(seed)
-    rng.shuffle(films)
-    n = len(films)
-    n_train = int(n * split_ratios[0])
-    n_val = int(n * split_ratios[1])
-    train_ids = set(films[:n_train])
-    val_ids = set(films[n_train : n_train + n_val])
-    test_ids = set(films[n_train + n_val :])
-
-    out = {"train": [], "val": [], "test": []}
-    for example in pairs:
-        film_id = example["film"]
-        if film_id in train_ids:
-            out["train"].append(example)
-        elif film_id in val_ids:
-            out["val"].append(example)
-        else:
-            out["test"].append(example)
-    return out
-
 
 def _add_n_triples(example: dict) -> dict:
     """Return a shallow copy of *example* with an explicit ``n_triples`` field."""

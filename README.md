@@ -33,6 +33,7 @@ nanosocrates/
 │  ├─ predict_example.py         # inference minimale da riga di comando
 │  ├─ sanity_overfit.py          # scorciatoia per l'overfit di un batch
 │  ├─ inspect_mlm_batch.py       # stampa e valida un batch per il masked LM
+│  ├─ split_by_film.py           # suddivide pairs JSONL in train/val/test per film
 │  └─ train_tokenizer.py         # addestra il tokenizer BPE
 └─ src/
    ├─ run.py                     # entrypoint unificato (train/overfit/evaluate/predict)
@@ -76,6 +77,26 @@ pip install -r requirements.txt
    lista `allowed_languages` del file `configs/data/build.yaml`. Per includere altre
    lingue aggiungi gli URI DBpedia desiderati (es. `dbr:Italian_language`) a quella
    lista e rigenera il dataset.
+
+   #### Rigenera gli split con `split_by_film.py`
+
+   Il comando precedente salva sempre `data/interim/pairs.all.jsonl` prima di creare
+   gli split. Se vuoi rifare la suddivisione **senza** ricostruire l'intero dataset
+   (ad esempio dopo aver filtrato manualmente `pairs.all.jsonl` oppure partendo da
+   un file generato da un'altra pipeline) usa lo script standalone:
+
+   ```bash
+   python -m scripts.split_by_film \
+       --pairs data/interim/pairs.all.jsonl \
+       --outdir data/interim \
+       --seed 13 \
+       --ratios 0.8,0.1,0.1
+   ```
+
+   Lo script crea `pairs.train/val/test.jsonl` nell'`outdir` indicato, controllando
+   che nessun film finisca in più split (in tal caso l'esecuzione fallisce con un
+   messaggio esplicito). Puoi eseguirlo anche **prima** di `build_dataset.py` per
+   preparare gli split che poi lo script principale riutilizzerà.
 3. **Addestra (o aggiorna) il tokenizer**
    ```bash
    python -m scripts.train_tokenizer --config configs/tokenizer/bpe_default.yaml
