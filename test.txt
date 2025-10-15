@@ -4,3 +4,130 @@
 python -m scripts.build_toy_subset --pairs data/interim/pairs.all.jsonl --splits data/interim/splits.json --processed-dir data/processed --outdir data/processed/toy --films 10
 
  python -m src.run overfit  --cfg configs/train/multitask_default.yaml --toy --steps 25 --print-batch --print-batch-limit 2
+
+
+ PS C:\Users\amile\OneDrive - Politecnico di Bari\Personal-Surface\UNI\magistrale poliba\ESAMI\DEEP LEARNING\PROGETTO\NanoSocrates> python -m scripts.data_audit --pairs data/interim --tasks-dir data/processed --max-len 256
+[21:02:07] INFO - Risolti 4 file di coppie
+[21:02:07] INFO - Analisi file coppie: data\interim\pairs.all.jsonl
+[21:02:07] INFO - Analisi file coppie: data\interim\pairs.test.jsonl
+[21:02:07] INFO - Analisi file coppie: data\interim\pairs.train.jsonl
+[21:02:07] INFO - Analisi file coppie: data\interim\pairs.val.jsonl
+[21:02:07] INFO - Triple totali processate: 15082
+=== Analisi pairs ===
+
+Top 20 predicati
+----------------
+ 11692  dbo:starring
+  1340  dbo:director
+   970  dbo:writer
+   674  dbo:runtime
+   292  dbo:musicComposer
+    94  dbo:releaseDate
+    20  dbo:genre
+
+Top 20 oggetti
+--------------
+    40  5400.0
+    28  dbr:Gerald_Thomas
+    26  dbr:Charles_Hawtrey_(actor,_born_1914)
+    24  5760.0
+    24  dbr:Joan_Sims
+    24  dbr:Eric_Rogers_(composer)
+    22  5700.0
+    22  4980.0
+    22  dbr:Kenneth_Williams
+    22  dbr:Wakana_Yamazaki
+    20  5580.0
+    20  6000.0
+    20  dbr:Sid_James
+    20  dbr:Kappei_Yamaguchi
+    18  5640.0
+    18  6060.0
+    18  dbr:Megumi_Hayashibara
+    18  dbr:Wataru_Takagi
+    18  dbr:Kenichi_Ogata_(voice_actor)
+    16  7200.0
+
+Top 20 soggetti
+---------------
+    36  dbr:Saurabh_Shukla
+    34  dbr:Derek_Yee
+    32  dbr:Ugo_Tognazzi
+    32  dbr:Devadas_Kapikad
+    30  dbr:David_Hemmings
+    30  dbr:Sachin_(actor)
+    30  dbr:Ruth_Gordon
+    28  dbr:Caddyshack_II
+    28  dbr:John_Rubinstein
+    28  dbr:Robert_Conrad
+    28  dbr:Maximilian_Schell
+    26  dbr:Calamari_Union
+    26  dbr:Campus_(TV_series)
+    26  dbr:Cardcaptor_Sakura_Movie_2:_The_Sealed_Card
+    26  dbr:Carnage_(2017_film)
+    26  dbr:Carry_On_Girls
+    26  dbr:Carrie_Preston
+    26  dbr:Robert_Montgomery_(actor)
+    26  dbr:David_Hayman
+    26  dbr:Deven_Verma
+[21:02:07] INFO - Risolti 12 file di task
+[21:02:07] INFO - Analisi file task: data\processed\rdf2text.test.jsonl
+
+=== rdf2text.test ===
+input → esempi=98 min=41 avg=61.16 max=121 | > 256 token: 0.00%
+target → esempi=98 min=9 avg=49.35 max=163 | > 256 token: 0.00%
+[21:02:07] INFO - Analisi file task: data\processed\rdf2text.train.jsonl
+
+=== rdf2text.train ===
+input → esempi=784 min=41 avg=62.56 max=145 | > 256 token: 0.00%
+target → esempi=784 min=6 avg=49.62 max=200 | > 256 token: 0.00%
+[21:02:07] INFO - Analisi file task: data\processed\rdf2text.val.jsonl
+
+=== rdf2text.val ===
+input → esempi=98 min=41 avg=63.94 max=137 | > 256 token: 0.00%
+target → esempi=98 min=9 avg=46.30 max=107 | > 256 token: 0.00%
+[21:02:07] INFO - Analisi file task: data\processed\rdfcomp1.test.jsonl
+
+=== rdfcomp1.test ===
+input → esempi=98 min=41 avg=61.16 max=121 | > 256 token: 0.00%
+target → esempi=98 min=1 avg=1.00 max=1 | > 256 token: 0.00%
+[21:02:07] INFO - Analisi file task: data\processed\rdfcomp1.train.jsonl
+
+=== rdfcomp1.train ===
+input → esempi=784 min=41 avg=62.56 max=145 | > 256 token: 0.00%
+target → esempi=784 min=1 avg=1.00 max=1 | > 256 token: 0.00%
+[21:02:07] INFO - Analisi file task: data\processed\rdfcomp1.val.jsonl
+
+=== rdfcomp1.val ===
+input → esempi=98 min=41 avg=63.94 max=137 | > 256 token: 0.00%
+target → esempi=98 min=1 avg=1.00 max=1 | > 256 token: 0.00%
+[21:02:08] INFO - Analisi file task: data\processed\rdfcomp2.test.jsonl
+
+=== rdfcomp2.test ===
+input → esempi=98 min=25 avg=35.04 max=73 | > 256 token: 0.00%
+target → esempi=98 min=16 avg=26.12 max=48 | > 256 token: 0.00%
+[21:02:08] INFO - Analisi file task: data\processed\rdfcomp2.train.jsonl
+
+=== rdfcomp2.train ===
+input → esempi=784 min=25 avg=35.62 max=81 | > 256 token: 0.00%
+target → esempi=784 min=16 avg=26.94 max=64 | > 256 token: 0.00%
+[21:02:08] INFO - Analisi file task: data\processed\rdfcomp2.val.jsonl
+
+=== rdfcomp2.val ===
+input → esempi=98 min=25 avg=36.76 max=81 | > 256 token: 0.00%
+target → esempi=98 min=16 avg=27.18 max=56 | > 256 token: 0.00%
+[21:02:08] INFO - Analisi file task: data\processed\text2rdf.test.jsonl
+
+=== text2rdf.test ===
+input → esempi=98 min=10 avg=50.35 max=164 | > 256 token: 0.00%
+target → esempi=98 min=40 avg=60.16 max=120 | > 256 token: 0.00%
+[21:02:08] INFO - Analisi file task: data\processed\text2rdf.train.jsonl
+
+=== text2rdf.train ===
+input → esempi=784 min=7 avg=50.62 max=201 | > 256 token: 0.00%
+target → esempi=784 min=40 avg=61.56 max=144 | > 256 token: 0.00%
+[21:02:08] INFO - Analisi file task: data\processed\text2rdf.val.jsonl
+
+=== text2rdf.val ===
+input → esempi=98 min=10 avg=47.30 max=108 | > 256 token: 0.00%
+target → esempi=98 min=40 avg=62.94 max=136 | > 256 token: 0.00%
