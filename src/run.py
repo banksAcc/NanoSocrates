@@ -14,6 +14,7 @@ from typing import Any, Dict
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
 
 from src.decoding.base import decode_to_text
@@ -41,6 +42,93 @@ TASK_MARKERS = {
     "rdfcomp2": "<CONTINUERDF>",
     "rdfcomp1": "<MASK>",
 }
+
+
+def _decode_for_logging(tokenizer: Tokenizer, sequence: Any, pad_value: int | None) -> str:
+    """Decode *sequence* removing tokens equal to *pad_value* when provided."""
+
+    if isinstance(sequence, torch.Tensor):
+        sequence = sequence.tolist()
+
+    if pad_value is not None:
+        filtered = [int(tok) for tok in sequence if int(tok) != int(pad_value)]
+    else:
+        filtered = [int(tok) for tok in sequence]
+
+    if not filtered:
+        return ""
+
+    try:
+        return tokenizer.decode(filtered, skip_special_tokens=False)
+    except Exception as exc:  # pragma: no cover - logging best effort
+        LOGGER.warning("Decodifica fallita durante la preview del batch: %s", exc)
+        return ""
+
+
+def _preview_dataloader_batch(
+    loader: DataLoader,
+    tokenizer: Tokenizer,
+    *,
+    limit: int,
+) -> None:
+    """Log a preview of the first batch emitted by *loader*."""
+
+    if limit <= 0:
+        LOGGER.info("Anteprima batch disattivata perché limit=%d", limit)
+        return
+
+    iterator = iter(loader)
+    try:
+        batch = next(iterator)
+    except StopIteration:
+        LOGGER.warning("Impossibile mostrare il batch: il DataLoader è vuoto.")
+        return
+
+    pad_id = tokenizer.token_to_id("<pad>")
+    if pad_id is None:
+        LOGGER.warning(
+            "Token <pad> non trovato nel tokenizer: impossibile rimuovere il padding dalla preview."
+        )
+
+    label_pad_id = pad_id if pad_id is not None else -100
+
+    batch_size = batch["input_ids"].size(0)
+    LOGGER.info("Anteprima del primo batch (%d esempi)", batch_size)
+
+    labels = batch.get("labels")
+    if isinstance(labels, torch.Tensor):
+        non_pad = int((labels != label_pad_id).sum().item())
+        LOGGER.info("Token da predire nel batch (escludendo pad): %d", non_pad)
+
+    tasks = batch.get("tasks") or []
+    raw_inputs = batch.get("raw_input") or []
+    raw_targets = batch.get("raw_target") or []
+
+    max_examples = min(batch_size, limit)
+    for idx in range(max_examples):
+        example_labels = batch["labels"][idx]
+        tokens_to_predict = int((example_labels != label_pad_id).sum().item())
+        decoded_input = _decode_for_logging(tokenizer, batch["input_ids"][idx], pad_id)
+        decoded_labels = _decode_for_logging(tokenizer, example_labels, label_pad_id)
+
+        header = f"Esempio {idx}"
+        if tasks:
+            header += f" | task={tasks[idx]}"
+        LOGGER.info(header)
+        LOGGER.info("  Token da predire: %d", tokens_to_predict)
+        if raw_inputs and raw_inputs[idx]:
+            LOGGER.info("  Input grezzo: %s", raw_inputs[idx])
+        LOGGER.info("  Input decodificato: %s", decoded_input)
+        if raw_targets and raw_targets[idx]:
+            LOGGER.info("  Target grezzo: %s", raw_targets[idx])
+        LOGGER.info("  Labels decodificate: %s", decoded_labels)
+
+    if max_examples < batch_size:
+        LOGGER.info(
+            "(Anteprima limitata a %d esempi su %d: usare --print-batch-limit per aumentare)",
+            max_examples,
+            batch_size,
+        )
 
 
 def _get_pad_id(tokenizer: Tokenizer) -> int:
@@ -172,7 +260,14 @@ def _print_report(report: Dict[str, object]) -> None:
                 print(f"        samples={vals.get('samples', 0)}")
 
 
-def run_training(cfg: Dict[str, Any], *, overfit: bool = False, overfit_steps: int | None = None) -> None:
+def run_training(
+    cfg: Dict[str, Any],
+    *,
+    overfit: bool = False,
+    overfit_steps: int | None = None,
+    preview_batch: bool = False,
+    preview_batch_limit: int = 3,
+) -> None:
     """Esegue l'intero ciclo di training partendo da un config strutturato."""
     seed = int(cfg.get("seed", 42))
     set_seed(seed)
@@ -214,6 +309,9 @@ def run_training(cfg: Dict[str, Any], *, overfit: bool = False, overfit_steps: i
         num_workers=num_workers,
         shuffle=False,
     )
+
+    if preview_batch:
+        _preview_dataloader_batch(train_loader, tokenizer, limit=preview_batch_limit)
 
     num_epochs = int(cfg.get("num_epochs", 1))
     # If overfitting, allow mapping an explicit step count to epochs (1 batch/epoch)
@@ -322,7 +420,14 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     if overfit_steps is not None and overfit_steps > 0:
         cfg["num_epochs"] = int(overfit_steps)
 
-    run_training(cfg, overfit=True, overfit_steps=overfit_steps)
+    preview_limit = int(getattr(args, "print_batch_limit", 3))
+    run_training(
+        cfg,
+        overfit=True,
+        overfit_steps=overfit_steps,
+        preview_batch=bool(getattr(args, "print_batch", False)),
+        preview_batch_limit=preview_limit,
+    )
 
 def enum_to_str(obj):
     if isinstance(obj, Enum):
@@ -420,6 +525,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=200,
         help="Numero di aggiornamenti consecutivi sullo stesso batch (default: 200)",
+    )
+    p_overfit.add_argument(
+        "--print-batch",
+        action="store_true",
+        help="Stampa il primo batch del DataLoader per ispezionare input e label",
+    )
+    p_overfit.add_argument(
+        "--print-batch-limit",
+        type=int,
+        default=3,
+        help="Numero massimo di esempi da mostrare quando si usa --print-batch (default: 3)",
     )
 
     p_eval = sub.add_parser("evaluate", help="Valuta un checkpoint sui task indicati")
