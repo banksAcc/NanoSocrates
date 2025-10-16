@@ -96,6 +96,7 @@ def build_and_cache_datasets(
     train_items: List[Any] = []
     val_items: List[Any] = []
     ratios: Dict[str, float] = {}
+    test_items: List[Any] = []
 
     if dataset_specs:
         for entry in dataset_specs:
@@ -107,6 +108,7 @@ def build_and_cache_datasets(
                 raise ValueError("Specifica i path 'train' e 'val' per ogni dataset.")
             task_hint = entry.get("name") or entry.get("task")
             weight = float(entry.get("weight", 1.0))
+            test_path = entry.get("test")
 
             train_ds = JsonlSeq2Seq(
                 str(train_path),
@@ -120,6 +122,15 @@ def build_and_cache_datasets(
                 max_len=max_len,
                 task=task_hint,
             )
+
+            if test_path:
+                test_ds = JsonlSeq2Seq(
+                    str(test_path),
+                    tokenizer,
+                    max_len=max_len,
+                    task=task_hint,
+                )
+                test_items.extend(test_ds.items)
 
             task_name = _select_task_name(train_ds, str(task_hint or train_path))
             ratios[task_name] = weight
@@ -139,6 +150,7 @@ def build_and_cache_datasets(
             )
         task_hint = config.get("task") or config.get("name")
         weight = float(config.get("weight", 1.0))
+        test_path = config.get("test_file") or config.get("test_path")
 
         train_ds = JsonlSeq2Seq(
             str(train_path),
@@ -153,6 +165,15 @@ def build_and_cache_datasets(
             task=task_hint,
         )
 
+        if test_path:
+            test_ds = JsonlSeq2Seq(
+                str(test_path),
+                tokenizer,
+                max_len=max_len,
+                task=task_hint,
+            )
+            test_items.extend(test_ds.items)
+
         task_name = _select_task_name(train_ds, str(task_hint or train_path))
         ratios[task_name] = weight
 
@@ -165,8 +186,13 @@ def build_and_cache_datasets(
     train_dataset = MultiTaskDataset(train_items)
     val_dataset = MultiTaskDataset(val_items or train_items)
 
-    return {
+    payload = {
         "train": train_dataset,
         "validation": val_dataset,
         "ratios": ratios,
     }
+
+    if test_items:
+        payload["test"] = MultiTaskDataset(test_items)
+
+    return payload
