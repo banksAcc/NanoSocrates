@@ -58,7 +58,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2.2 Pipeline base (dati -> tokenizer → training → valutazione)
+### 2.2 Pipeline base (dati → tokenizer → training → valutazione)
 
 1. **Raccogli le sorgenti**
 
@@ -69,155 +69,67 @@ pip install -r requirements.txt
    ```
 
 2. **Costruisci il dataset multi-task**
+
    ```bash
-   python -m scripts.build_dataset --config configs/data/build.yaml --dbp data/raw/dbpedia_triples.jsonl --wiki data/raw/wikipedia_intro.jsonl --outdir data/processed --emit_tasks
+   python -m scripts.build_dataset \
+       --config configs/data/build.yaml \
+       --dbp data/raw/dbpedia_triples.jsonl \
+       --wiki data/raw/wikipedia_intro.jsonl \
+       --outdir data/processed \
+       --emit_tasks
    ```
-   Il dataset risultante include tutti i film con testo sufficiente a superare i
-   controlli di qualità (numero minimo di triple, deduplica, caps per predicato).
+
 3. **Addestra (o aggiorna) il tokenizer**
+
    ```bash
    python -m scripts.train_tokenizer --config configs/tokenizer/bpe_default.yaml
    ```
+
 4. **Avvia il training**
+
    ```bash
    python -m src.run train --cfg configs/train/multitask_default.yaml
    ```
-   - Nei log di validazione viene riportata anche la metrica `exact_match`: indica la
-     frazione di esempi in cui l'intera sequenza generata coincide con il target e serve
-     come controllo rapido durante l'overfit/sanity check. Non va interpretata come una
-     *accuracy* token-level o task-specific.
-5. **Valuta il checkpoint** (report JSON + metriche aggregate)
+
+   I log mostrano `loss` ed `exact_match` medi su train/validation. `exact_match`
+   è pensato come sanity check rapido (sequenza generata identica al target).
+
+5. **Valuta un checkpoint**
+
    ```bash
-   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override checkpoint=checkpoints/multitask_default/best.pt --output reports/multitask_default_eval.json
+   python -m src.run evaluate \
+       --cfg configs/train/multitask_default.yaml \
+       --checkpoint checkpoints/multitask_default/best.pt \
+       --splits validation test
    ```
-   - I parametri di generazione (es. attivare il beam search con vincolo sulla
-     ripetizione) sono configurabili nel blocco `generation_params` del file YAML;
-     quelli presenti in `configs/eval/multitask_default.yaml` abilitano di default un
-     beam search a 4 ipotesi con `length_penalty=1.0`, `no_repeat_ngram_size=3`,
-     `repetition_penalty=1.1` ed `early_stopping`.
-   - Il vincolo sintattico sulla grammatica RDF (`enforce_rdf_grammar`) resta
-     disattivato di default e viene abilitato automaticamente solo durante la
-     valutazione dei task strutturati (`text2rdf`, `rdfcomp2`). Se necessario è
-     possibile forzarlo da CLI o nel blocco `generation_params`.
 
-#### 2.2.1 Controllare il decoding dalla CLI
+   Per valutare su un file diverso basta indicare `--splits` (es. `train`).
 
-Per esperimenti rapidi è possibile usare il comando `predict` del runner o lo script
-`scripts/predict_example.py` passando gli stessi argomenti:
+### 2.3 Sanity check rapido / overfit di un batch
+
+Per verificare rapidamente che il modello e i dati funzionino:
 
 ```bash
-python -m src.run predict \
-    --checkpoint checkpoints/multitask_default/best.pt \
-    --tokenizer data/vocab/bpe.json \
-    --input "<SOT> <SUBJ> Film <PRED> director <OBJ>" \
-    --task text2rdf \
-    --use-beam-search \
-    --beam-size 4 \
-    --length-penalty 1.0 \
-    --no-repeat-ngram-size 3 \
-    --repetition-penalty 1.1
-    # --enforce-rdf-grammar se si desidera forzare il vincolo in altri contesti
+python -m src.run train \
+    --cfg configs/train/multitask_default.yaml \
+    --override limit_train_batches=1 shuffle_train=false num_epochs=50 dropout=0.0
 ```
 
-I flag permettono di replicare da terminale le stesse impostazioni del file YAML,
-inclusa la disattivazione dell'`early_stopping` (`--no-early-stopping`) quando si
-vuole esplorare l'intero spazio di ricerca del beam. Per forzare o disattivare la
-grammatica RDF rispetto alla selezione automatica per task si possono usare,
-rispettivamente, i flag `--enforce-rdf-grammar` e `--disable-rdf-grammar`.
+* `limit_train_batches=1` forza l'uso del primo batch ad ogni epoca.
+* `shuffle_train=false` evita che il batch cambi fra le epoche.
+* `dropout=0.0` velocizza l'overfit.
 
-### 2.3 Tutorial — sottoinsieme toy (20 film)
+Se la pipeline è corretta la `loss` scende velocemente (<1 dopo poche decine di
+epoche). Per accorciare ulteriormente il test si può creare un sottoinsieme
+ridotto copiando poche righe dei file `*.train.jsonl`/`*.val.jsonl` e puntando
+il config a tali file tramite `--override datasets[0].train=...` ecc.
 
-1. Assicurati di avere `data/interim/pairs.all.jsonl` e `data/interim/splits.json`
-   generati da `scripts/build_dataset.py`.
-2. Rigenera i JSONL ridotti:
-   ```bash
-   python -m scripts.build_toy_subset --pairs data/interim/pairs.all.jsonl --splits data/interim/splits.json --processed-dir data/processed --outdir data/processed/toy --films 20
-   ```
-3. Esegui training e valutazione puntando ai nuovi file con il flag `--toy`:
-   ```bash
-   python -m src.run train --cfg configs/train/multitask_default.yaml --toy
+### 2.4 Suggerimenti pratici
 
-   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override checkpoint=checkpoints/multitask_default/best.pt --output reports/multitask_default_eval.json --toy
-   ```
-
-### 2.4 Tutorial — sanity check (overfit di un batch)
-
-1. Riusa la configurazione standard e forza gli override automatici:
-   ```bash
-   python -m src.run overfit --cfg configs/train/multitask_default.yaml --toy
-   ```
-   Il comando forza il dataset a un singolo batch, disattiva l'early stopping e
-   per impostazione predefinita esegue 200 aggiornamenti consecutivi sullo stesso batch.
-   - Il numero di esempi nel batch coincide con `batch_size` del config (16 nel
-     preset `configs/train/multitask_default.yaml`). Se vuoi restringerlo, passa
-     `--override batch_size=4` o modifica il valore nel YAML.
-   - Usa `--steps N` per cambiare il numero di ottimizzazioni (es. `--steps 400`).
-     Qualsiasi ulteriore `--override` passato da RUN viene rispettato.
-2. In alternativa esiste lo script dedicato:
-   ```bash
-   python -m scripts.sanity_overfit --cfg configs/train/multitask_default.yaml --toy
-   ```
-3. (Opzionale) Per ispezionare il batch che viene ripetuto durante l'overfit usa
-   il flag `--print-batch`:
-
-   ```bash
-   python -m src.run overfit --cfg configs/train/multitask_default.yaml --toy --print-batch --print-batch-limit 2
-   ```
-
-   Il comando stampa sul logger `INFO` un riepilogo del primo batch emesso dal
-   `DataLoader`: numero di token non di padding, testo decodificato, eventuali
-   campi grezzi (`raw_input`/`raw_target`) e il task associato a ciascun esempio.
-   Il limite di esempi mostrati è controllato da `--print-batch-limit` (default: 3).
-
-4. Vedrai i log INFO con le metriche di validazione ad ogni epoca e la perdita nel
-   postfix della progress bar. Verifica che la loss scenda rapidamente verso ~0:
-   questo conferma che tokenizer, dataloader, loop di training e logging sono collegati.
-
-#### 2.4.1 Interpretazione della loss nel sanity check
-
-- **Prime epoche**: è normale partire da perdite molto alte (anche >150) perché il
-  modello sta iniziando da pesi random e il batch toy è estremamente eterogeneo.
-- **Andamento atteso**: con `--override dropout=0.0` e AMP attivo, il modello
-  memorizza il batch in poche decine di step. In pratica vedrai la loss scendere
-  sotto 50 dopo ~5–6 epoche e convergere verso <1 (fino a ~0.05) entro 20–30 epoche.
-- **Se la loss resta >10 per decine di epoche**: verifica che `--toy` punti ai file
-  ridotti corretti, che il tokenizer sia lo stesso usato per generarli e, in caso di
-  dubbi, usa `--print-batch` per stampare gli ID e i testi del mini-dataset (cerca
-  valori `-100` nelle labels solo nelle posizioni di padding).
-- **Plateau sopra 1**: di solito indica token fuori vocabolario o batch pieni di
-  padding; in quel caso ricontrolla il dataset di input e considera di rigenerare il
-  toy set.
-
-### 2.5 Tutorial — valutazione con Weights & Biases
-
-1. Modifica il config (o usa gli override) per abilitare W&B.
-   ```bash
-   python -m src.run train --cfg configs/train/multitask_default.yaml --override wandb.mode=online wandb.project=nanosocrates-demo wandb.run_name=debug
-   ```
-   I campi supportati sono `mode` (`online`, `offline`, `disabled`), `project`,
-   `entity`, `run_name`, `tags` (lista) e `watch` (bool). Se non specifichi
-   `run_name`, il RUN genera automaticamente un nome leggibile basato sul file
-   di config, sul tipo di esecuzione (`train`/`overfit`) e sul timestamp; in caso
-   contrario apparirebbero i nomi casuali di default di W&B. Se la connessione
-   fallisce viene eseguito automaticamente il fallback in modalità offline.
-2. Per loggare anche la valutazione usa lo stesso approccio:
-   ```bash
-   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override \
-       checkpoint=checkpoints/multitask_default/best.pt \
-       wandb.mode=online wandb.project=nanosocrates-demo --output reports/multitask_default_eval.json
-   ```
-   Le metriche vengono appiattite tramite `src.utils.wandb_utils.flatten_eval_metrics`
-   e inviate come singolo step alla run già configurata.
-3. Per eseguire la valutazione dal RUN unificato mantenendo gli override:
-   ```bash
-   python -m src.run evaluate --cfg configs/eval/multitask_default.yaml --override \
-       checkpoint=checkpoints/multitask_default/best.pt \
-       wandb.mode=online wandb.project=nanosocrates-demo --output reports/multitask_default_eval.json
-   ```
-
-### 2.6 Debug — ispeziona un batch MLM
-
-Lo script `scripts/inspect_mlm_batch.py` consente di verificare rapidamente che il
+* Esecuzione su CPU: `--override device=cpu batch_size=2 num_workers=0`.
+* Cambiare dimensione batch / epoche: `--override batch_size=8 num_epochs=3`.
+* Limitare la valutazione per debug: `--override limit_val_batches=2`.
+* Salvare i checkpoint in una directory diversa: `--override save_dir=my_runs/test1`.
 tokenizer e il `DataCollatorForLanguageModeling` generino batch coerenti prima di
 avviare esperimenti di training. Per usarlo:
 

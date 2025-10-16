@@ -39,22 +39,14 @@ num_epochs: 10
 gradient_accumulation_steps: 1
 lr: 3e-4
 weight_decay: 0.01
-scheduler: "cosine"
-warmup_ratio: 0.05
-min_lr_ratio: 0.02
 save_dir: "checkpoints/multitask_default"
 seed: 42
 device: "cuda"
 num_workers: 4
 
-early_stopping:
-  patience: 3
-  min_delta: 0.1
-
-wandb:
-  mode: "disabled" # disabled, offline, online
-  project: "nanosocrates"
-  entity: null
-  run_name: null
-  tags: ["multitask"]
-  watch: false
+# opzioni di debug (tutte opzionali)
+shuffle_train: true
+shuffle_eval: false
+limit_train_batches: null
+limit_val_batches: null
+limit_test_batches: null
