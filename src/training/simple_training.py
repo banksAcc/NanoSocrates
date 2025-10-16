@@ -66,6 +66,7 @@ def train_one_epoch(
     total_loss = 0.0
     total_exact = 0.0
     total_batches = 0
+    total_examples = 0
     pending = 0
 
     for batch in loader:
@@ -79,9 +80,12 @@ def train_one_epoch(
         if loss is None:
             raise ValueError("Il modello deve restituire una loss per addestrare.")
 
-        total_loss += float(loss.detach().item())
-        total_exact += float(outputs.get("metrics", {}).get("exact_match", 0.0))
+        batch_size = len(batch["input_ids"])
+
+        total_loss += float(loss.detach().item()) * batch_size
+        total_exact += float(outputs.get("metrics", {}).get("exact_match", 0.0)) * batch_size
         total_batches += 1
+        total_examples += batch_size
 
         (loss / max(1, grad_accum_steps)).backward()
         pending += 1
@@ -99,7 +103,7 @@ def train_one_epoch(
         optimizer.step()
         optimizer.zero_grad()
 
-    denom = max(1, total_batches)
+    denom = max(1, total_examples)
     return {
         "loss": total_loss / denom,
         "exact_match": total_exact / denom,
@@ -138,6 +142,7 @@ def evaluate_model(
     total_loss = 0.0
     total_exact = 0.0
     total_batches = 0
+    total_examples = 0
     per_task: Dict[str, list[float]] = defaultdict(list)
 
     with torch.no_grad():
@@ -153,9 +158,12 @@ def evaluate_model(
             if loss is None:
                 raise ValueError("Il modello deve restituire una loss in valutazione.")
 
-            total_loss += float(loss.item())
-            total_exact += float(outputs.get("metrics", {}).get("exact_match", 0.0))
+            batch_size = len(batch["input_ids"])
+
+            total_loss += float(loss.item()) * batch_size
+            total_exact += float(outputs.get("metrics", {}).get("exact_match", 0.0)) * batch_size
             total_batches += 1
+            total_examples += batch_size
 
             logits = outputs.get("logits")
             tasks: Iterable[str] = batch.get("tasks") or []
@@ -164,7 +172,7 @@ def evaluate_model(
                 for index, task in enumerate(tasks):
                     per_task[task].append(float(per_example[index].item()))
 
-    denom = max(1, total_batches)
+    denom = max(1, total_examples)
     summary: Dict[str, object] = {
         "loss": total_loss / denom,
         "exact_match": total_exact / denom,

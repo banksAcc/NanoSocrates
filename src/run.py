@@ -15,6 +15,7 @@ from tokenizers import Tokenizer
 from src.data.builders import build_and_cache_datasets
 from src.model.transformer import TinySeq2Seq
 from src.tokenizer.tokenizer_io import ensure_runtime_special_tokens
+from src.training.dataloaders import create_multitask_dataloader
 from src.training.simple_training import build_dataloader, evaluate_model, train_one_epoch
 from src.utils.config import (
     add_common_overrides,
@@ -128,17 +129,28 @@ def run_training(cfg: Dict[str, Any]) -> None:
     train_dataset = datasets["train"]
     val_dataset = datasets.get("validation")
     test_dataset = datasets.get("test")
+    ratios = datasets.get("ratios") or {}
     pad_id = _pad_id(tokenizer)
 
     batch_size = int(cfg.get("batch_size", 16))
     num_workers = int(cfg.get("num_workers", 0))
-    train_loader = build_dataloader(
-        train_dataset,
-        tokenizer,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-    )
+    if ratios:
+        train_loader = create_multitask_dataloader(
+            train_dataset,
+            tokenizer=tokenizer,
+            batch_size=batch_size,
+            ratios=ratios,
+            num_workers=num_workers,
+            shuffle=True,
+        )
+    else:
+        train_loader = build_dataloader(
+            train_dataset,
+            tokenizer,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+        )
     val_loader = (
         build_dataloader(val_dataset, tokenizer, batch_size=batch_size, shuffle=False, num_workers=num_workers)
         if val_dataset
